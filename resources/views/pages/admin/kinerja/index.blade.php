@@ -18,20 +18,20 @@
 </div>
 
 <div class="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 lg:grid-cols-4 dark:border-gray-800 dark:bg-gray-800">
-    <div class="bg-white p-4 dark:bg-gray-900">
-        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $kategoriRanges['sangat_baik'] ?? 'Sangat Baik (>= 85)' }}</p>
+    <div class="bg-white p-4 dark:bg-gray-900" title="Rentang skor: {{ $kategoriRanges['sangat_baik'] ?? 'Sangat Baik (>= 85)' }}">
+        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Sangat Baik</p>
         <p class="mt-1 font-mono text-2xl font-semibold text-emerald-700 dark:text-emerald-300">{{ $distribusiKategori['sangat_baik'] ?? 0 }}</p>
     </div>
-    <div class="bg-white p-4 dark:bg-gray-900">
-        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $kategoriRanges['baik'] ?? 'Baik (75 - < 85)' }}</p>
+    <div class="bg-white p-4 dark:bg-gray-900" title="Rentang skor: {{ $kategoriRanges['baik'] ?? 'Baik (75 - < 85)' }}">
+        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Baik</p>
         <p class="mt-1 font-mono text-2xl font-semibold text-brand-600 dark:text-brand-300">{{ $distribusiKategori['baik'] ?? 0 }}</p>
     </div>
-    <div class="bg-white p-4 dark:bg-gray-900">
-        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $kategoriRanges['cukup'] ?? 'Cukup (60 - < 75)' }}</p>
+    <div class="bg-white p-4 dark:bg-gray-900" title="Rentang skor: {{ $kategoriRanges['cukup'] ?? 'Cukup (60 - < 75)' }}">
+        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Cukup</p>
         <p class="mt-1 font-mono text-2xl font-semibold text-amber-700 dark:text-amber-300">{{ $distribusiKategori['cukup'] ?? 0 }}</p>
     </div>
-    <div class="bg-white p-4 dark:bg-gray-900">
-        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $kategoriRanges['kurang'] ?? 'Kurang (< 60)' }}</p>
+    <div class="bg-white p-4 dark:bg-gray-900" title="Rentang skor: {{ $kategoriRanges['kurang'] ?? 'Kurang (< 60)' }}">
+        <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Kurang</p>
         <p class="mt-1 font-mono text-2xl font-semibold text-red-700 dark:text-red-300">{{ $distribusiKategori['kurang'] ?? 0 }}</p>
     </div>
 </div>
