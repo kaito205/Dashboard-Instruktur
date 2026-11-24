@@ -192,9 +192,9 @@
     >
         <div class="flex items-start justify-between gap-2 pb-2.5 mb-1 border-b border-gray-200 dark:border-gray-800">
             <div class="min-w-0">
-                <h5 class="text-sm font-semibold text-gray-900 dark:text-white">Notifikasi &amp; Eskalasi Sistem</h5>
+                <h5 class="text-sm font-semibold text-gray-900 dark:text-white">Notifikasi Operasional</h5>
                 <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
-                    <span x-text="totalAlerts"></span> notifikasi aktif
+                    <span x-text="totalAlerts"></span> perlu tinjauan
                 </p>
             </div>
 
@@ -228,11 +228,16 @@
                 <li class="py-3 px-1.5">
                     <div class="flex items-start gap-2.5">
                         <span class="mt-1.5 inline-flex h-2 w-2 shrink-0 rounded-full"
-                            :title="item.level === 'critical' ? 'Mendesak / Eskalasi' : (item.level === 'warning' ? 'Peringatan' : 'Informasi')"
+                            :title="item.level === 'critical' ? 'Prioritas Tinggi' : (item.level === 'warning' ? 'Peringatan' : 'Informasi')"
                             :class="item.level === 'critical' ? 'bg-red-600' : (item.level === 'warning' ? 'bg-amber-500' : 'bg-brand-600')"></span>
 
                         <div class="min-w-0 flex-1">
-                            <p class="text-xs font-semibold text-gray-900 dark:text-white" x-text="item.judul"></p>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <p class="text-xs font-semibold text-gray-900 dark:text-white" x-text="item.judul"></p>
+                                <span x-show="item.level === 'info'"
+                                    class="inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                                    x-text="'Info ' + (item.kategori || 'Jadwal')"></span>
+                            </div>
                             <p x-show="item.ringkasan" class="mt-0.5 text-xs text-gray-600 dark:text-gray-300" x-text="item.ringkasan"></p>
 
                             <div class="mt-2.5 flex flex-wrap items-center gap-2">

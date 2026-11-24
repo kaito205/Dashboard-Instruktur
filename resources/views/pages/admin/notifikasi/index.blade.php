@@ -1,13 +1,21 @@
 @extends('layouts.admin.app')
-@section('title', 'Pusat Notifikasi & Eskalasi Operasional')
+@section('title', 'Pusat Notifikasi Operasional')
 
 @section('content')
 <div class="space-y-6">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 class="text-xl font-bold text-gray-900 dark:text-white">Pusat Notifikasi</h1>
+        <div>
+            <h1 class="text-xl font-bold text-gray-900 dark:text-white">Pusat Notifikasi</h1>
+            <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
+                Total <span class="font-mono font-semibold text-gray-900 dark:text-white">{{ $alerts['total_peringatan'] ?? 0 }}</span> item perlu tinjauan
+                @if (($alerts['total_info'] ?? 0) > 0)
+                    &middot; <span class="font-medium text-brand-700 dark:text-brand-300">{{ $alerts['total_info'] }} pengingat jadwal</span>
+                @endif
+            </p>
+        </div>
 
         <div class="flex flex-wrap items-center gap-2">
-            @if (($alerts['total_peringatan'] ?? 0) > 0)
+            @if (($alerts['total_semua_aktif'] ?? $alerts['total_peringatan'] ?? 0) > 0)
                 <form method="POST" action="{{ route('admin.notifikasi.tinjau-semua') }}">
                     @csrf
                     <input type="hidden" name="dari" value="{{ $dari }}">
@@ -28,15 +36,21 @@
 
     <div class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 lg:grid-cols-4 dark:border-gray-800 dark:bg-gray-800">
         <div class="bg-white p-4 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Notifikasi Aktif</p>
+            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Perlu Tinjauan</p>
             <p class="mt-1 font-mono text-2xl font-semibold {{ ($alerts['total_peringatan'] ?? 0) > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-gray-900 dark:text-white' }}">
                 {{ $alerts['total_peringatan'] ?? 0 }}
             </p>
-            <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Perlu tinjauan</p>
+            <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                @if (($alerts['total_info'] ?? 0) > 0)
+                    + {{ $alerts['total_info'] }} pengingat jadwal
+                @else
+                    Peringatan operasional aktif
+                @endif
+            </p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Belum Isi Jurnal</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-red-700 dark:text-red-300">{{ count($alerts['eskalasi_2x24_jam'] ?? []) }}</p>
+            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Belum Mengisi Jurnal</p>
+            <p class="mt-1 font-mono text-2xl font-semibold text-red-700 dark:text-red-300">{{ count($alerts['kelas_tanpa_laporan'] ?? []) }}</p>
             <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Sesi terlewat tanpa laporan</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
@@ -57,7 +71,7 @@
         <div class="inline-flex flex-wrap gap-1 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-800 dark:bg-gray-900">
             <a href="{{ route('admin.notifikasi.index', ['tab' => 'aktif', 'dari' => $dari, 'sampai' => $sampai]) }}"
                class="inline-flex min-h-[44px] items-center rounded-md px-4 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 {{ $tab === 'aktif' ? 'bg-brand-600 text-white' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800' }}">
-                Aktif ({{ $alerts['total_peringatan'] ?? 0 }})
+                Aktif ({{ $alerts['total_semua_aktif'] ?? $alerts['total_peringatan'] ?? 0 }})
             </a>
             <a href="{{ route('admin.notifikasi.index', ['tab' => 'riwayat', 'dari' => $dari, 'sampai' => $sampai]) }}"
                class="inline-flex min-h-[44px] items-center rounded-md px-4 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 {{ $tab === 'riwayat' ? 'bg-brand-600 text-white' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800' }}">
@@ -91,7 +105,7 @@
                 @forelse ($activeList as $item)
                     @php
                         $dotCls = $item['level'] === 'critical' ? 'bg-red-600' : ($item['level'] === 'warning' ? 'bg-amber-500' : 'bg-brand-600');
-                        $dotLabel = $item['level'] === 'critical' ? 'Mendesak / Eskalasi' : ($item['level'] === 'warning' ? 'Peringatan' : 'Informasi');
+                        $dotLabel = $item['level'] === 'critical' ? 'Prioritas Tinggi' : ($item['level'] === 'warning' ? 'Peringatan' : 'Informasi');
                     @endphp
                     <div class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                         <div class="flex min-w-0 items-start gap-3">
@@ -100,7 +114,16 @@
                             </span>
 
                             <div class="min-w-0">
-                                <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ $item['judul'] }}</p>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ $item['judul'] }}</p>
+                                    @if (($item['level'] ?? '') === 'info')
+                                        <span class="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                                            Info {{ $item['kategori'] }}
+                                        </span>
+                                    @else
+                                        <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ $item['kategori'] }}</span>
+                                    @endif
+                                </div>
                                 @if (!empty($item['ringkasan']))
                                     <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">{{ $item['ringkasan'] }}</p>
                                 @endif

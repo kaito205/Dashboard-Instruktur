@@ -244,10 +244,20 @@
         </div>
 
         <div class="lg:col-span-7 rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-            <div class="flex items-center justify-between border-b border-gray-200 pb-3 dark:border-gray-800">
-                <div>
-                    <h2 class="text-base font-semibold text-gray-900 dark:text-white">Peringatan Operasional</h2>
-                    <p class="text-xs text-gray-600 dark:text-gray-300">Total <span data-alert-count class="font-mono font-semibold text-gray-900 dark:text-white">{{ $alerts['total_peringatan'] ?? 0 }}</span> item perlu tinjauan</p>
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-3 dark:border-gray-800">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div>
+                        <h2 class="text-base font-semibold text-gray-900 dark:text-white">Peringatan Operasional</h2>
+                        <p class="text-xs text-gray-600 dark:text-gray-300">
+                            Total <span data-alert-count class="font-mono font-semibold text-gray-900 dark:text-white">{{ $alerts['total_peringatan'] ?? 0 }}</span> item perlu tinjauan
+                        </p>
+                    </div>
+                    @if (($alerts['total_info'] ?? 0) > 0)
+                        <span class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                            <span class="inline-flex h-1.5 w-1.5 rounded-full bg-brand-600"></span>
+                            {{ $alerts['total_info'] }} pengingat jadwal
+                        </span>
+                    @endif
                 </div>
                 <a href="{{ route($rp . '.notifikasi.index') }}"
                     class="inline-flex min-h-[44px] items-center rounded-lg px-2 text-xs font-semibold text-brand-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-300">
@@ -256,11 +266,11 @@
             </div>
             <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-800/50">
-                    <p class="text-[11px] font-medium text-gray-600 dark:text-gray-300">Kelas Tanpa Laporan</p>
+                    <p class="text-[11px] font-medium text-gray-600 dark:text-gray-300">Jurnal &amp; Presensi Tertunda</p>
                     <p class="mt-0.5 font-mono text-lg font-bold text-gray-900 dark:text-white">{{ $alertCategorySummary['kelas_tanpa_laporan'] ?? 0 }}</p>
                 </div>
                 <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-800/50">
-                    <p class="text-[11px] font-medium text-gray-600 dark:text-gray-300">Sertifikasi Hampir Kedaluwarsa</p>
+                    <p class="text-[11px] font-medium text-gray-600 dark:text-gray-300">Sertifikasi Perlu Pembaruan</p>
                     <p class="mt-0.5 font-mono text-lg font-bold text-gray-900 dark:text-white">{{ $alertCategorySummary['sertifikasi_hampir_expired'] ?? 0 }}</p>
                 </div>
                 <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-800/50">
@@ -280,12 +290,19 @@
                     </thead>
                     <tbody class="divide-y divide-gray-200 dark:divide-gray-800">
                         @forelse (($alerts['items_aktif'] ?? collect())->take(5) as $alertItem)
-                            <tr data-alert-row="{{ $alertItem['alert_key'] }}">
+                            <tr data-alert-row="{{ $alertItem['alert_key'] }}" data-alert-level="{{ $alertItem['level'] }}">
                                 <td class="px-3 py-2.5 whitespace-nowrap">
-                                    <span class="inline-flex items-center gap-2 font-medium text-gray-800 dark:text-gray-200">
-                                        <span class="inline-flex h-2 w-2 shrink-0 rounded-full {{ $alertItem['level'] === 'critical' ? 'bg-red-600' : ($alertItem['level'] === 'warning' ? 'bg-amber-500' : 'bg-brand-600') }}"></span>
-                                        {{ $alertItem['kategori'] }}
-                                    </span>
+                                    @if (($alertItem['level'] ?? '') === 'info')
+                                        <span class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                                            <span class="inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-brand-600"></span>
+                                            Info {{ $alertItem['kategori'] }}
+                                        </span>
+                                    @else
+                                        <span class="inline-flex items-center gap-2 font-medium text-gray-800 dark:text-gray-200">
+                                            <span class="inline-flex h-2 w-2 shrink-0 rounded-full {{ $alertItem['level'] === 'critical' ? 'bg-red-600' : 'bg-amber-500' }}"></span>
+                                            {{ $alertItem['kategori'] }}
+                                        </span>
+                                    @endif
                                 </td>
                                 <td class="px-3 py-2.5 font-semibold text-gray-900 dark:text-white">{{ $alertItem['judul'] }}</td>
                                 <td class="px-3 py-2.5 text-gray-700 dark:text-gray-300">{{ $alertItem['ringkasan'] }}</td>

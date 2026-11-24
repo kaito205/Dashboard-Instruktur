@@ -561,7 +561,7 @@ class LaporanController extends Controller
 
         $roleContext = $this->routePrefix === 'supervisor' ? 'supervisor' : 'admin';
         $alerts      = $this->alertService->getSummaryAlerts($dari, $sampai, $roleContext);
-        $alertItems  = collect($alerts['items_aktif'] ?? []);
+        $alertItems  = collect($alerts['items_perlu_tinjauan'] ?? $alerts['items_aktif'] ?? []);
 
         if ($instrukturId !== '') {
             $filterInsId = (int) $instrukturId;
@@ -571,11 +571,11 @@ class LaporanController extends Controller
         }
 
         $alertRingkasan = [
-            'total'                     => $alertItems->count(),
-            'kelas_tanpa_laporan'       => $alertItems->where('kategori', 'Jurnal')->count(),
-            'sertifikasi_hampir_expired'=> $alertItems->where('kategori', 'Sertifikasi')->count(),
-            'instruktur_dibawah_standar'=> $alertItems->where('kategori', 'Kinerja')->count(),
-            'items'                     => $alertItems->take(8)->values(),
+            'total'                      => $alertItems->count(),
+            'kelas_tanpa_laporan'        => $alertItems->whereIn('kategori', ['Jurnal', 'Kehadiran'])->count(),
+            'sertifikasi_hampir_expired' => $alertItems->where('kategori', 'Sertifikasi')->count(),
+            'instruktur_dibawah_standar' => $alertItems->where('kategori', 'Kinerja')->count(),
+            'items'                      => $alertItems->take(8)->values(),
         ];
 
         $distribusiKategori = [

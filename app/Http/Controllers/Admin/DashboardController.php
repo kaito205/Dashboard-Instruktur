@@ -194,19 +194,28 @@ class DashboardController extends Controller
             $alerts['items_aktif'] = collect($alerts['items_aktif'] ?? [])
                 ->filter(fn (array $item): bool => (int) ($item['instruktur_id'] ?? 0) === $filterInsId)
                 ->values();
+            $alerts['items_perlu_tinjauan'] = $alerts['items_aktif']
+                ->filter(fn (array $item): bool => in_array($item['level'] ?? '', ['critical', 'warning'], true))
+                ->values();
+            $alerts['items_info'] = $alerts['items_aktif']
+                ->filter(fn (array $item): bool => ($item['level'] ?? '') === 'info')
+                ->values();
             if (isset($alerts['feed'])) {
                 $alerts['feed'] = collect($alerts['feed'])
                     ->filter(fn (array $item): bool => (int) ($item['instruktur_id'] ?? 0) === $filterInsId)
                     ->values();
             }
-            $alerts['total_peringatan'] = $alerts['items_aktif']->count();
+            $alerts['total_peringatan']  = $alerts['items_perlu_tinjauan']->count();
+            $alerts['total_info']        = $alerts['items_info']->count();
+            $alerts['total_semua_aktif'] = $alerts['items_aktif']->count();
         }
 
-        $activeAlertItems = collect($alerts['items_aktif'] ?? []);
+        $activeAlertItems = collect($alerts['items_perlu_tinjauan'] ?? $alerts['items_aktif'] ?? []);
         $alertCategorySummary = [
-            'kelas_tanpa_laporan'        => $activeAlertItems->where('kategori', 'Jurnal')->count(),
+            'kelas_tanpa_laporan'        => $activeAlertItems->whereIn('kategori', ['Jurnal', 'Kehadiran'])->count(),
             'sertifikasi_hampir_expired' => $activeAlertItems->where('kategori', 'Sertifikasi')->count(),
-            'instruktur_dibawah_standar' => $allKinerja->where('kategori', 'kurang')->count(),
+            'instruktur_dibawah_standar' => $activeAlertItems->where('kategori', 'Kinerja')->count(),
+            'pengingat_info'             => (int) ($alerts['total_info'] ?? 0),
         ];
 
         $isKinerjaRuleConfirmed = $this->kinerjaService->isRuleConfirmed();

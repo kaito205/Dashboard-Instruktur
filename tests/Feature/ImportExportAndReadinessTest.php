@@ -311,4 +311,64 @@ class ImportExportAndReadinessTest extends TestCase
         $insPdfRes->assertOk();
         $insPdfRes->assertSee('Budi Santoso');
     }
+
+    public function test_operational_alerts_use_clean_copywriting_day_duration_and_separate_info_reminders(): void
+    {
+        $overdueDate = today()->subDays(5);
+
+        Jadwal::create([
+            'instruktur_id'    => $this->instruktur->id,
+            'kode_kelas'       => 'JRK-01',
+            'nama_kelas'       => 'Jaringan Lanjut',
+            'materi'           => 'Routing OSPF',
+            'tanggal'          => $overdueDate->toDateString(),
+            'jam_mulai'        => '08:00',
+            'jam_selesai'      => '10:00',
+            'is_pola_mingguan' => false,
+            'status'           => 'terjadwal',
+        ]);
+
+        // Tambah jadwal untuk besok (H-1) sebagai pengingat info
+        Jadwal::create([
+            'instruktur_id'    => $this->instruktur->id,
+            'kode_kelas'       => 'JRK-02',
+            'nama_kelas'       => 'Jaringan Besok',
+            'materi'           => 'VLAN Trunking',
+            'tanggal'          => today()->addDay()->toDateString(),
+            'jam_mulai'        => '09:00',
+            'jam_selesai'      => '11:00',
+            'is_pola_mingguan' => false,
+            'status'           => 'terjadwal',
+        ]);
+
+        \App\Services\OperationalAlertService::clearMemo();
+
+        $dari   = $overdueDate->copy()->startOfMonth()->toDateString();
+        $sampai = today()->endOfMonth()->toDateString();
+        $alerts = app(\App\Services\OperationalAlertService::class)->getSummaryAlerts($dari, $sampai, 'admin', $this->admin->id);
+
+        // Pastikan total_peringatan hanya menghitung item yang perlu tinjauan (critical/warning), terpisah dari pengingat jadwal besok (info)
+        $this->assertEquals(1, $alerts['total_peringatan']);
+        $this->assertEquals(1, $alerts['total_info']);
+        $this->assertEquals(2, $alerts['total_semua_aktif']);
+
+        $jurnalAlert = collect($alerts['items_aktif'])->firstWhere('kategori', 'Jurnal');
+        $this->assertNotNull($jurnalAlert);
+        $this->assertEquals('Budi Santoso belum mengisi jurnal', $jurnalAlert['judul']);
+        $this->assertStringContainsString('JRK-01 · ' . $overdueDate->format('d/m/Y') . ' · Terlambat 5 hari', $jurnalAlert['ringkasan']);
+        $this->assertStringNotContainsString('Eskalasi', $jurnalAlert['judul']);
+        $this->assertStringNotContainsString('Eskalasi', $jurnalAlert['ringkasan']);
+
+        // Pastikan tampil merata di Dashboard dan halaman Notifikasi Admin & Supervisor
+        $this->actingAs($this->admin)->get(route('admin.dashboard', ['periode' => 'kustom', 'dari' => $dari, 'sampai' => $sampai]))
+            ->assertOk()
+            ->assertSee('Budi Santoso belum mengisi jurnal')
+            ->assertSee('Terlambat 5 hari')
+            ->assertSee('1 pengingat jadwal');
+
+        $this->actingAs($this->supervisor)->get(route('supervisor.notifikasi.index', ['dari' => $dari, 'sampai' => $sampai]))
+            ->assertOk()
+            ->assertSee('Budi Santoso belum mengisi jurnal')
+            ->assertSee('Terlambat 5 hari');
+    }
 }

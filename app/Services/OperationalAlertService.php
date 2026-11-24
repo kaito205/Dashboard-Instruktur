@@ -74,6 +74,8 @@ class OperationalAlertService
                 $waktuSesi  = Carbon::parse($akt->tanggal->toDateString() . ' ' . $jamSelesai);
                 $isEskalasi = $waktuSesi->lte($batasEskalasi);
                 $jamLewat   = max(0, (int) $waktuSesi->diffInHours(now(), false));
+                $hariLewat  = max(0, (int) $akt->tanggal->copy()->startOfDay()->diffInDays(today(), false));
+                $kodeKelas  = $akt->jadwal?->kode_kelas ?: ($akt->jadwal?->nama_kelas ?? '-');
 
                 return [
                     'id'            => $akt->id,
@@ -82,10 +84,12 @@ class OperationalAlertService
                     'alert_key'     => $isEskalasi ? "eskalasi_aktivitas:{$akt->id}" : "aktivitas_belum:{$akt->id}",
                     'instruktur'    => $akt->instruktur?->nama_lengkap ?? '-',
                     'kelas'         => $akt->jadwal?->nama_kelas ?? '-',
+                    'kode_kelas'    => $kodeKelas,
                     'materi'        => $akt->materi_disampaikan ?? $akt->jadwal?->materi ?? '-',
                     'tanggal'       => $akt->tanggal->format('d/m/Y'),
                     'tanggal_raw'   => $akt->tanggal->toDateString(),
                     'jam_lewat'     => $jamLewat,
+                    'hari_lewat'    => $hariLewat,
                     'is_eskalasi'   => $isEskalasi,
                     'source'        => 'aktivitas',
                 ];
@@ -108,6 +112,8 @@ class OperationalAlertService
                 $waktuSesi  = $occ['waktu_selesai'];
                 $isEskalasi = $waktuSesi->lte($batasEskalasi);
                 $jamLewat   = max(0, (int) $waktuSesi->diffInHours(now(), false));
+                $hariLewat  = max(0, (int) Carbon::parse($tgl)->startOfDay()->diffInDays(today(), false));
+                $kodeKelas  = $jadwal->kode_kelas ?: ($jadwal->nama_kelas ?? '-');
 
                 return [
                     'id'            => null,
@@ -118,10 +124,12 @@ class OperationalAlertService
                         : "jadwal_tanpa_laporan:{$jadwal->id}:{$tgl}",
                     'instruktur'    => $jadwal->instruktur?->nama_lengkap ?? '-',
                     'kelas'         => $jadwal->nama_kelas ?? '-',
+                    'kode_kelas'    => $kodeKelas,
                     'materi'        => $jadwal->materi ?: 'Umum',
                     'tanggal'       => Carbon::parse($tgl)->format('d/m/Y'),
                     'tanggal_raw'   => $tgl,
                     'jam_lewat'     => $jamLewat,
+                    'hari_lewat'    => $hariLewat,
                     'is_eskalasi'   => $isEskalasi,
                     'source'        => 'jadwal_terlewat',
                 ];
@@ -220,7 +228,6 @@ class OperationalAlertService
         $rawItems = [];
 
         foreach ($aktivitasBelumDikonfirmasiAll as $akt) {
-            $ringkasan = "{$akt['kelas']} · {$akt['tanggal']}";
             $targetUrl = route($prefix . '.kehadiran.index', array_filter([
                 'tab'         => 'aktivitas',
                 'instruktur'  => $akt['instruktur_id'] ?? null,
@@ -233,21 +240,22 @@ class OperationalAlertService
 
             $isEskalasi = (bool) ($akt['is_eskalasi'] ?? false);
             $jamLewat   = (int) ($akt['jam_lewat'] ?? 0);
-            $ringkasan  = $isEskalasi
-                ? "{$akt['kelas']} · {$akt['tanggal']} (Eskalasi > 2x24 jam · lewat {$jamLewat} jam)"
-                : "{$akt['kelas']} · {$akt['tanggal']}";
+            $hariLewat  = (int) ($akt['hari_lewat'] ?? 0);
+            $durasiInfo = $this->formatDurasiTerlambat($jamLewat, $hariLewat);
+            $labelKelas = $akt['kode_kelas'] ?? $akt['kelas'] ?? '-';
+            $ringkasan  = $durasiInfo !== ''
+                ? "{$labelKelas} · {$akt['tanggal']} · {$durasiInfo}"
+                : "{$labelKelas} · {$akt['tanggal']}";
 
             $rawItems[] = [
                 'alert_key'     => $akt['alert_key'],
                 'instruktur_id' => $akt['instruktur_id'] ?? null,
                 'kategori'      => 'Jurnal',
                 'level'         => $isEskalasi ? 'critical' : 'warning',
-                'judul'         => $isEskalasi
-                    ? "{$akt['instruktur']} - Eskalasi jurnal > 2x24 jam"
-                    : "{$akt['instruktur']} - Belum isi jurnal",
+                'judul'         => "{$akt['instruktur']} belum mengisi jurnal",
                 'ringkasan'     => $ringkasan,
                 'deskripsi'     => $ringkasan,
-                'waktu'         => $isEskalasi ? "Lewat {$jamLewat} jam" : $akt['tanggal'],
+                'waktu'         => $durasiInfo !== '' ? $durasiInfo : $akt['tanggal'],
                 'url'           => $targetUrl,
                 'cta_label'     => 'Tindak Lanjuti',
             ];
@@ -255,74 +263,78 @@ class OperationalAlertService
 
         foreach ($belumCheckoutAll as $abs) {
             $jamMasuk  = $abs->jam_checkin ? substr((string) $abs->jam_checkin, 0, 5) : '-';
-            $kelasNama = $abs->jadwal?->nama_kelas ?? 'Sesi mengajar';
+            $kelasNama = $abs->jadwal?->kode_kelas ?: ($abs->jadwal?->nama_kelas ?? 'Sesi mengajar');
             $tglStr    = $abs->tanggal ? $abs->tanggal->format('d/m/Y') : '-';
-            $ringkasan = "{$kelasNama} · {$tglStr} (Masuk {$jamMasuk})";
+            $ringkasan = "{$kelasNama} · {$tglStr} · Masuk {$jamMasuk} WIB";
 
             $rawItems[] = [
                 'alert_key'     => "belum_checkout:{$abs->id}",
                 'instruktur_id' => $abs->instruktur_id,
                 'kategori'      => 'Kehadiran',
-                'level'     => 'warning',
-                'judul'     => ($abs->instruktur?->nama_lengkap ?? '-') . ' - Belum check-out',
-                'ringkasan' => $ringkasan,
-                'deskripsi' => $ringkasan,
-                'waktu'     => $tglStr,
-                'url'       => route($prefix . '.kehadiran.index', ['tab' => 'absensi', 'instruktur' => $abs->instruktur_id]),
-                'cta_label' => 'Periksa',
+                'level'         => 'warning',
+                'judul'         => ($abs->instruktur?->nama_lengkap ?? '-') . ' belum check-out',
+                'ringkasan'     => $ringkasan,
+                'deskripsi'     => $ringkasan,
+                'waktu'         => $tglStr,
+                'url'           => route($prefix . '.kehadiran.index', ['tab' => 'absensi', 'instruktur' => $abs->instruktur_id]),
+                'cta_label'     => 'Periksa',
             ];
         }
 
         foreach ($sertifikasiAlertsAll as $sert) {
             $isExpired = $sert['status_sertifikasi'] === 'kedaluwarsa';
-            $ringkasan = "{$sert['nama_sertifikasi']} · s.d. {$sert['berlaku_sampai']}";
+            $sisaHari  = (int) ($sert['sisa_hari'] ?? 0);
+            $sisaLabel = $isExpired
+                ? 'Terlambat ' . abs($sisaHari) . ' hari'
+                : ($sisaHari === 0 ? 'Berakhir hari ini' : 'Sisa ' . $sisaHari . ' hari');
+            $ringkasan = "{$sert['nama_sertifikasi']} · Berlaku s.d. {$sert['berlaku_sampai']} · {$sisaLabel}";
 
             $rawItems[] = [
                 'alert_key'     => $sert['alert_key'],
                 'instruktur_id' => $sert['instruktur_id'] ?? null,
                 'kategori'      => 'Sertifikasi',
-                'level'     => $isExpired ? 'critical' : 'warning',
-                'judul'     => "{$sert['nama_lengkap']} - " . ($isExpired ? 'Sertifikat kedaluwarsa' : 'Sertifikat hampir habis'),
-                'ringkasan' => $ringkasan,
-                'deskripsi' => $ringkasan,
-                'waktu'     => $isExpired ? 'Lewat ' . abs($sert['sisa_hari']) . ' hari' : 'Sisa ' . $sert['sisa_hari'] . ' hari',
-                'url'       => $prefix === 'supervisor'
+                'level'         => $isExpired ? 'critical' : 'warning',
+                'judul'         => "{$sert['nama_lengkap']} " . ($isExpired ? 'memiliki sertifikat kedaluwarsa' : 'memiliki sertifikat hampir kedaluwarsa'),
+                'ringkasan'     => $ringkasan,
+                'deskripsi'     => $ringkasan,
+                'waktu'         => $sisaLabel,
+                'url'           => $prefix === 'supervisor'
                     ? route('supervisor.instruktur.show', $sert['instruktur_id']) . '#sertifikasi'
                     : route('admin.instruktur.show', $sert['instruktur_id']) . '#sertifikasi',
-                'cta_label' => $prefix === 'supervisor' ? 'Lihat Profil' : 'Perbarui',
+                'cta_label'     => $prefix === 'supervisor' ? 'Lihat Profil' : 'Perbarui',
             ];
         }
 
         foreach ($instrukturBawahStandarAll as $low) {
             $skorFmt   = number_format((float) $low['skor_akhir'], 2);
-            $ringkasan = "Kategori: {$low['kategori_label']}";
+            $ringkasan = "Skor {$skorFmt} · Kategori {$low['kategori_label']} (standar minimal {$batasCukupLabel})";
 
             $rawItems[] = [
                 'alert_key'     => $low['alert_key'],
                 'instruktur_id' => $low['instruktur']->id ?? null,
                 'kategori'      => 'Kinerja',
-                'level'     => 'critical',
-                'judul'     => "{$low['instruktur']->nama_lengkap} - Skor kinerja rendah ({$skorFmt})",
-                'ringkasan' => $ringkasan,
-                'deskripsi' => $ringkasan,
-                'waktu'     => 'Periode aktif',
-                'url'       => route($prefix . '.kinerja.index', ['instruktur' => $low['instruktur']->id]),
-                'cta_label' => 'Tinjau',
+                'level'         => 'critical',
+                'judul'         => "{$low['instruktur']->nama_lengkap} berada di bawah standar kinerja",
+                'ringkasan'     => $ringkasan,
+                'deskripsi'     => $ringkasan,
+                'waktu'         => 'Periode aktif',
+                'url'           => route($prefix . '.kinerja.index', ['instruktur' => $low['instruktur']->id]),
+                'cta_label'     => 'Tinjau',
             ];
         }
 
         if ($jadwalBesokCount > 0) {
             $tglBesok  = today()->addDay()->translatedFormat('d M Y');
-            $ringkasan = "{$tglBesok} · Pastikan kesiapan instruktur & ruangan";
+            $ringkasan = "{$hariBesok}, {$tglBesok} · Pastikan kesiapan instruktur & ruangan";
 
             $rawItems[] = [
                 'alert_key' => "jadwal_besok:{$besokStr}",
                 'kategori'  => 'Jadwal',
                 'level'     => 'info',
-                'judul'     => "{$jadwalBesokCount} jadwal mengajar besok ({$hariBesok})",
+                'judul'     => "{$jadwalBesokCount} jadwal mengajar besok",
                 'ringkasan' => $ringkasan,
                 'deskripsi' => $ringkasan,
-                'waktu'     => 'H-1 Jadwal',
+                'waktu'     => 'Pengingat H-1',
                 'url'       => route($prefix . '.jadwal.index', [
                     'tampilan'         => 'kalender',
                     'skala_kalender'   => 'harian',
@@ -345,9 +357,17 @@ class OperationalAlertService
             ->filter(fn (array $item) => ! $reviewedKeys->has($item['alert_key']))
             ->values();
 
+        $itemsPerluTinjauan = $itemsAktif
+            ->filter(fn (array $item) => in_array($item['level'] ?? '', ['critical', 'warning'], true))
+            ->values();
+        $itemsInfo = $itemsAktif
+            ->filter(fn (array $item) => ($item['level'] ?? '') === 'info')
+            ->values();
+
         $itemsRiwayat = $reviewedRecords->map(function (NotifikasiTinjauan $rec) use ($allCurrentByKey, $prefix) {
-            $ringkasan  = $rec->ringkasan ?? '';
-            $currentUrl = $allCurrentByKey->get($rec->alert_key)['url'] ?? $rec->url;
+            $rawRingkasan = $rec->ringkasan ?? '';
+            $ringkasan    = $this->normalizeLegacyRingkasan($rawRingkasan);
+            $currentUrl   = $allCurrentByKey->get($rec->alert_key)['url'] ?? $rec->url;
 
             return [
                 'alert_key'           => $rec->alert_key,
@@ -389,8 +409,12 @@ class OperationalAlertService
             'hari_besok'               => $hariBesok,
             'feed'                     => $itemsAktif->all(),
             'items_aktif'              => $itemsAktif,
+            'items_perlu_tinjauan'     => $itemsPerluTinjauan,
+            'items_info'               => $itemsInfo,
             'items_riwayat'            => $itemsRiwayat,
-            'total_peringatan'         => $itemsAktif->count(),
+            'total_peringatan'         => $itemsPerluTinjauan->count(),
+            'total_info'               => $itemsInfo->count(),
+            'total_semua_aktif'        => $itemsAktif->count(),
             'total_riwayat'            => $itemsRiwayat->count(),
         ];
 
@@ -735,9 +759,58 @@ class OperationalAlertService
         return static::$memo[$memoKey] = $result;
     }
 
+    private function formatDurasiTerlambat(int $jamLewat, int $hariLewat = 0): string
+    {
+        if ($jamLewat <= 0 && $hariLewat <= 0) {
+            return '';
+        }
+
+        if ($jamLewat >= 24) {
+            $hari = max($hariLewat, intdiv($jamLewat, 24));
+            return "Terlambat {$hari} hari";
+        }
+
+        return "Terlambat {$jamLewat} jam";
+    }
+
+    private function normalizeLegacyRingkasan(string $ringkasan): string
+    {
+        $clean = trim($ringkasan);
+        if ($clean === '') {
+            return '';
+        }
+
+        if (preg_match('/^(.*?)\s*\(Eskalasi\s*>\s*2x24\s*jam\s*·\s*lewat\s*(\d+)\s*jam\)$/i', $clean, $m)) {
+            $base       = trim($m[1]);
+            $jamLewat   = (int) $m[2];
+            $durasiInfo = $this->formatDurasiTerlambat($jamLewat);
+
+            return $durasiInfo !== '' ? "{$base} · {$durasiInfo}" : $base;
+        }
+
+        return $clean;
+    }
+
     private function normalizeLegacyJudul(string $judul, string $ringkasan): string
     {
         $clean = trim($judul);
+
+        if (preg_match('/^(.+?)\s*-\s*(Eskalasi jurnal\s*>\s*2x24\s*jam|Belum isi jurnal)$/i', $clean, $m)) {
+            return trim($m[1]) . ' belum mengisi jurnal';
+        }
+        if (preg_match('/^(.+?)\s*-\s*Belum check-out$/i', $clean, $m)) {
+            return trim($m[1]) . ' belum check-out';
+        }
+        if (preg_match('/^(.+?)\s*-\s*Sertifikat kedaluwarsa$/i', $clean, $m)) {
+            return trim($m[1]) . ' memiliki sertifikat kedaluwarsa';
+        }
+        if (preg_match('/^(.+?)\s*-\s*Sertifikat hampir habis$/i', $clean, $m)) {
+            return trim($m[1]) . ' memiliki sertifikat hampir kedaluwarsa';
+        }
+        if (preg_match('/^(.+?)\s*-\s*Skor kinerja rendah/i', $clean, $m)) {
+            return trim($m[1]) . ' berada di bawah standar kinerja';
+        }
+
         if (! str_contains($clean, ': ')) {
             return $clean;
         }
@@ -746,18 +819,14 @@ class OperationalAlertService
         $prefix = trim($prefix);
         $nama   = trim($nama);
 
-        $masalah = match ($prefix) {
-            'Jurnal > 48 jam', 'Belum isi jurnal' => 'Belum isi jurnal',
-            'Belum check-out'                     => 'Belum check-out',
-            'Sertifikat kedaluwarsa'              => 'Sertifikat kedaluwarsa',
-            'Sertifikat hampir habis'             => 'Sertifikat hampir habis',
-            'Skor kinerja rendah'                 => preg_match('/Skor\s+([0-9.,]+)/i', $ringkasan, $m)
-                ? "Skor kinerja rendah ({$m[1]})"
-                : 'Skor kinerja rendah',
-            default => null,
+        return match ($prefix) {
+            'Jurnal > 48 jam', 'Belum isi jurnal' => "{$nama} belum mengisi jurnal",
+            'Belum check-out'                     => "{$nama} belum check-out",
+            'Sertifikat kedaluwarsa'              => "{$nama} memiliki sertifikat kedaluwarsa",
+            'Sertifikat hampir habis'             => "{$nama} memiliki sertifikat hampir kedaluwarsa",
+            'Skor kinerja rendah'                 => "{$nama} berada di bawah standar kinerja",
+            default                               => $clean,
         };
-
-        return $masalah !== null ? "{$nama} - {$masalah}" : $clean;
     }
 
     private function normalizeAlertUrlForRole(?string $url, string $prefix): ?string
