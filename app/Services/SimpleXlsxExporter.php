@@ -141,9 +141,18 @@ class SimpleXlsxExporter
     private function sanitizeText(string $value): string
     {
         $cleaned = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', ' ', $value);
+        $cleaned = preg_replace('/\s*\r?\n\s*|\r|\t/', ' ', (string) $cleaned);
         $cleaned = trim((string) $cleaned);
 
-        return $cleaned !== '' ? $cleaned : '-';
+        if ($cleaned === '') {
+            return '-';
+        }
+
+        if ($cleaned !== '-' && preg_match('/^[=+@\-]/', $cleaned) === 1 && !is_numeric($cleaned)) {
+            return "'" . $cleaned;
+        }
+
+        return $cleaned;
     }
 
     private function escapeXml(string $value): string

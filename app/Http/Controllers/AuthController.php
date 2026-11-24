@@ -7,10 +7,36 @@ use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
+    public function home()
+    {
+        if (Auth::check() && Auth::user()->is_active) {
+            return $this->redirectByRole((string) Auth::user()->role);
+        }
+
+        return redirect()->route('login');
+    }
+
+    public function servePublicStorage(string $path)
+    {
+        $cleanPath = ltrim(str_replace('\\', '/', $path), '/');
+        abort_if($cleanPath === '' || str_contains($cleanPath, '..') || str_contains($cleanPath, "\0"), 404);
+        abort_if(
+            str_starts_with($cleanPath, 'instruktur/sertifikasi/')
+            || str_starts_with($cleanPath, 'aktivitas/dokumentasi/'),
+            403
+        );
+        abort_unless(Storage::disk('public')->exists($cleanPath), 404);
+
+        return Storage::disk('public')->response($cleanPath, null, [
+            'Cache-Control' => 'public, max-age=86400',
+        ]);
+    }
+
     public function showLogin()
     {
         if (Auth::check()) {

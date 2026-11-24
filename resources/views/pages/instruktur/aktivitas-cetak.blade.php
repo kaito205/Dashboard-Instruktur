@@ -95,8 +95,17 @@
         </div>
     </div>
 
-    <h1>Laporan Aktivitas Mengajar Instruktur</h1>
-    <p class="muted">LPK Cipta Tungga Indonesia Ciamis &middot; Dicetak {{ now('Asia/Jakarta')->format('d/m/Y H:i') }} WIB</p>
+    @php
+        $appIdentity = \App\Models\Setting::getAppIdentity();
+        $lpkName     = $appIdentity['lpk_name'] ?? 'LPK Cipta Tungga Indonesia';
+    @endphp
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+        <img src="{{ asset('images/logo/logocti.png') }}" alt="Logo {{ $lpkName }}" style="height:40px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
+        <div>
+            <h1 style="margin:0;">Laporan Aktivitas Mengajar Instruktur</h1>
+            <p class="muted" style="margin:2px 0 0;">{{ $lpkName }} &middot; Dicetak {{ now('Asia/Jakarta')->format('d/m/Y H:i') }} WIB</p>
+        </div>
+    </div>
 
     <div class="meta">
         <div><strong>Instruktur:</strong> {{ $instruktur->nama_lengkap }} ({{ $instruktur->kode_instruktur }})</div>

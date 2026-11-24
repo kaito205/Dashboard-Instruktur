@@ -666,16 +666,19 @@
                     </div>
                     <h3 style="font-size:12px;margin:10px 0 6px;">Sertifikasi Kompetensi ({{ $individualReport['sertifikasis']->count() }})</h3>
                     <table style="margin-bottom:14px;">
-                        <thead><tr><th>No</th><th>Nama Sertifikasi</th><th>Nomor</th><th>Penerbit</th><th>Berlaku Sampai</th><th>Status</th></tr></thead>
+                        <thead><tr><th>No</th><th>Nama Sertifikasi</th><th>Keterangan / Penerbit</th><th>Berkas Dokumen</th><th>Berlaku Sampai</th><th>Status</th></tr></thead>
                         <tbody>
                             @forelse($individualReport['sertifikasis'] as $i => $s)
+                                @php
+                                    $sInfo = $s->status_info;
+                                @endphp
                                 <tr>
                                     <td class="num">{{ $i + 1 }}</td>
                                     <td>{{ $s->nama_sertifikasi }}</td>
-                                    <td class="num">{{ $s->nomor_sertifikat ?: '-' }}</td>
-                                    <td>{{ $s->penerbit ?: '-' }}</td>
+                                    <td>{{ $s->keterangan ?: '-' }}</td>
+                                    <td>{{ $s->file_name ?: '-' }}</td>
                                     <td class="num">{{ $s->berlaku_sampai?->format('d/m/Y') ?? '-' }}</td>
-                                    <td>{{ $s->status_kedaluwarsa_label ?? '-' }}</td>
+                                    <td>{{ ($sInfo['badge'] ?? 'Aktif') . (!empty($sInfo['detail']) ? ' (' . $sInfo['detail'] . ')' : '') }}</td>
                                 </tr>
                             @empty
                                 <tr><td colspan="6" class="empty-row">Belum ada data sertifikasi.</td></tr>

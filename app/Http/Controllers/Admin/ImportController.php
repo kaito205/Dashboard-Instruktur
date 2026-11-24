@@ -10,15 +10,20 @@ use App\Models\Instruktur;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class ImportController extends Controller
 {
+    private const MAX_IMPORT_ROWS      = 2000;
+    private const PREVIEW_STORAGE_DIR  = 'import_previews';
+    private const MAX_XLSX_XML_BYTES   = 20971520; // 20 MB uncompressed XML limit
+
     protected string $viewPrefix  = 'pages.admin.import';
     protected string $routePrefix = 'admin.import';
 
     protected function authorizeManageImport(): void
     {
-        abort_unless(auth()->check() && auth()->user()->hasRole('admin', 'supervisor'), 403);
+        abort_unless(auth()->check() && auth()->user()->hasRole('admin'), 403);
     }
 
     public function index()
@@ -117,6 +122,13 @@ class ImportController extends Controller
             $headers    = array_map(fn ($h) => $this->normalizeHeaderName((string) $h), $rawHeaders);
             $dataRows   = array_slice($rows, 1);
 
+            if (count($dataRows) > self::MAX_IMPORT_ROWS) {
+                return back()->with(
+                    'error',
+                    'Jumlah baris data melebihi batas maksimal (' . self::MAX_IMPORT_ROWS . ' baris per unggahan). Silakan bagi berkas menjadi beberapa bagian.'
+                );
+            }
+
             $missingColumns = $this->checkRequiredColumns($jenis, $headers);
             if (!empty($missingColumns)) {
                 return back()->with(
@@ -129,14 +141,14 @@ class ImportController extends Controller
             $preview          = array_slice($validationResult['rows'], 0, 50);
             $summary          = $validationResult['summary'];
 
-            $sessionKey = 'import_preview_' . auth()->id();
-            session([$sessionKey => [
+            $this->storePreviewPayload((int) auth()->id(), [
                 'jenis'        => $jenis,
                 'headers'      => $headers,
                 'rows'         => $dataRows,
                 'is_date_1904' => $isDate1904,
                 'filename'     => $file->getClientOriginalName(),
-            ]]);
+                'created_at'   => now()->timestamp,
+            ]);
 
             return view($this->viewPrefix . '.preview', compact('preview', 'headers', 'jenis', 'summary'));
         } catch (\Exception $e) {
@@ -148,8 +160,8 @@ class ImportController extends Controller
     {
         $this->authorizeManageImport();
 
-        $sessionKey = 'import_preview_' . auth()->id();
-        $data       = session($sessionKey);
+        $userId = (int) auth()->id();
+        $data   = $this->loadPreviewPayload($userId);
 
         if (!$data) {
             return redirect()->route($this->routePrefix . '.index')
@@ -189,7 +201,7 @@ class ImportController extends Controller
         $status = $gagal === 0 ? 'sukses' : ($berhasil === 0 ? 'gagal' : 'parsial');
 
         ImportHistory::create([
-            'user_id'        => auth()->id(),
+            'user_id'        => $userId,
             'jenis'          => $data['jenis'],
             'nama_file'      => $data['filename'],
             'total_baris'    => count($data['rows']),
@@ -199,12 +211,79 @@ class ImportController extends Controller
             'status'         => $status,
         ]);
 
-        session()->forget($sessionKey);
+        $this->deletePreviewPayload($userId);
 
         $message = "Import selesai. Berhasil: {$berhasil} baris, Gagal/Dilewati: {$gagal} baris.";
         return redirect()->route($this->routePrefix . '.index')
             ->with($status === 'gagal' ? 'error' : 'success', $message)
             ->with('import_errors', $errors);
+    }
+
+    private function previewFilePath(int $userId): string
+    {
+        return self::PREVIEW_STORAGE_DIR . '/preview_user_' . $userId . '.json';
+    }
+
+    private function cleanupExpiredPreviews(): void
+    {
+        $disk = Storage::disk('local');
+        if (!$disk->exists(self::PREVIEW_STORAGE_DIR)) {
+            return;
+        }
+
+        $cutoff = now()->subHour()->timestamp;
+        foreach ($disk->files(self::PREVIEW_STORAGE_DIR) as $filePath) {
+            try {
+                if ($disk->lastModified($filePath) < $cutoff) {
+                    $disk->delete($filePath);
+                }
+            } catch (\Throwable) {
+                // Abaikan jika file sudah terhapus oleh proses lain
+            }
+        }
+    }
+
+    private function storePreviewPayload(int $userId, array $payload): void
+    {
+        $this->cleanupExpiredPreviews();
+
+        $path = $this->previewFilePath($userId);
+        Storage::disk('local')->put(
+            $path,
+            json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
+        );
+        session()->forget('import_preview_' . $userId);
+    }
+
+    private function loadPreviewPayload(int $userId): ?array
+    {
+        $this->cleanupExpiredPreviews();
+
+        $disk = Storage::disk('local');
+        $path = $this->previewFilePath($userId);
+
+        if ($disk->exists($path)) {
+            $raw = $disk->get($path);
+            if (is_string($raw) && $raw !== '') {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded) && isset($decoded['jenis'], $decoded['headers'], $decoded['rows'])) {
+                    return $decoded;
+                }
+            }
+        }
+
+        $legacySession = session('import_preview_' . $userId);
+        return is_array($legacySession) ? $legacySession : null;
+    }
+
+    private function deletePreviewPayload(int $userId): void
+    {
+        $disk = Storage::disk('local');
+        $path = $this->previewFilePath($userId);
+        if ($disk->exists($path)) {
+            $disk->delete($path);
+        }
+        session()->forget('import_preview_' . $userId);
     }
 
     private function normalizeHeaderName(string $header): string
@@ -326,19 +405,37 @@ class ImportController extends Controller
                         $rowStatus  = 'invalid';
                         $rowMessage = 'Kolom status kehadiran kosong.';
                     } else {
-                        $uniqueKey = $instruktur->id . '|' . $tanggal;
-                        $existsDb  = Absensi::where('instruktur_id', $instruktur->id)
-                            ->whereDate('tanggal', $tanggal)
-                            ->exists();
+                        $parsedCheckin  = !empty($mapped['jam_checkin']) && trim((string) $mapped['jam_checkin']) !== '-'
+                            ? $this->parseTime((string) $mapped['jam_checkin'])
+                            : null;
+                        $parsedCheckout = !empty($mapped['jam_checkout']) && trim((string) $mapped['jam_checkout']) !== '-'
+                            ? $this->parseTime((string) $mapped['jam_checkout'])
+                            : null;
+                        $normStatus = $this->normalizeStatusAbsensi((string) $mapped['status']);
 
-                        if ($existsDb) {
-                            $rowStatus  = 'duplikat';
-                            $rowMessage = "Duplikat di database: Absensi {$instruktur->nama_lengkap} tanggal {$tanggal} sudah tercatat.";
-                        } elseif (isset($seenKeys[$uniqueKey])) {
-                            $rowStatus  = 'duplikat';
-                            $rowMessage = "Duplikat di dalam berkas (sama dengan baris {$seenKeys[$uniqueKey]}).";
+                        if (
+                            in_array($normStatus, ['hadir', 'terlambat'], true)
+                            && $parsedCheckin !== null
+                            && $parsedCheckout !== null
+                            && substr($parsedCheckout, 0, 5) < substr($parsedCheckin, 0, 5)
+                        ) {
+                            $rowStatus  = 'invalid';
+                            $rowMessage = "Jam check-out ({$parsedCheckout}) tidak boleh lebih awal dari jam check-in ({$parsedCheckin}).";
                         } else {
-                            $seenKeys[$uniqueKey] = $nomor;
+                            $uniqueKey = $instruktur->id . '|' . $tanggal;
+                            $existsDb  = Absensi::where('instruktur_id', $instruktur->id)
+                                ->whereDate('tanggal', $tanggal)
+                                ->exists();
+
+                            if ($existsDb) {
+                                $rowStatus  = 'duplikat';
+                                $rowMessage = "Duplikat di database: Absensi {$instruktur->nama_lengkap} tanggal {$tanggal} sudah tercatat.";
+                            } elseif (isset($seenKeys[$uniqueKey])) {
+                                $rowStatus  = 'duplikat';
+                                $rowMessage = "Duplikat di dalam berkas (sama dengan baris {$seenKeys[$uniqueKey]}).";
+                            } else {
+                                $seenKeys[$uniqueKey] = $nomor;
+                            }
                         }
                     }
                 }
@@ -382,9 +479,18 @@ class ImportController extends Controller
                 } elseif ($nilaiRaw !== null && trim((string) $nilaiRaw) !== '' && !is_numeric($nilaiRaw)) {
                     $rowStatus  = 'invalid';
                     $rowMessage = "Nilai evaluasi harus berupa angka, ditemukan: '{$nilaiRaw}'.";
+                } elseif ($nilaiRaw !== null && trim((string) $nilaiRaw) !== '' && ((float) $nilaiRaw < 0 || (float) $nilaiRaw > 100)) {
+                    $rowStatus  = 'invalid';
+                    $rowMessage = "Nilai evaluasi harus berada di rentang 0-100 (atau 1-5), ditemukan: '{$nilaiRaw}'.";
                 } else {
-                    $hashKey = $instruktur->id . '|' . md5(json_encode($normalizedMapped));
-                    if (isset($seenKeys[$hashKey])) {
+                    $evalCalc  = $this->extractAndNormalizeEvaluasiScores($normalizedMapped);
+                    $hashKey   = $instruktur->id . '|' . md5(json_encode($normalizedMapped));
+                    $existsDb  = $this->checkDuplicateEvaluasiInDb($instruktur->id, $normalizedMapped, $evalCalc['total_nilai']);
+
+                    if ($existsDb) {
+                        $rowStatus  = 'duplikat';
+                        $rowMessage = "Duplikat di database: Evaluasi untuk {$instruktur->nama_lengkap} dari pengisi ini sudah tercatat.";
+                    } elseif (isset($seenKeys[$hashKey])) {
                         $rowStatus  = 'duplikat';
                         $rowMessage = "Baris evaluasi identik dengan baris {$seenKeys[$hashKey]} di berkas ini.";
                     } else {
@@ -500,9 +606,23 @@ class ImportController extends Controller
             throw new \Exception('Berkas .xlsx rusak atau tidak dapat dibuka.');
         }
 
+        $xmlFlags = LIBXML_NONET | LIBXML_NOCDATA | LIBXML_COMPACT;
+
+        $readZipXml = function (string $entryName) use ($zip): string|false {
+            $stat = $zip->statName($entryName);
+            if ($stat === false) {
+                return false;
+            }
+            if (($stat['size'] ?? 0) > self::MAX_XLSX_XML_BYTES) {
+                $zip->close();
+                throw new \Exception('Ukuran data XML di dalam berkas .xlsx melebihi batas keamanan (maksimal 20MB).');
+            }
+            return $zip->getFromName($entryName);
+        };
+
         $isDate1904 = false;
-        if (($wbXml = $zip->getFromName('xl/workbook.xml')) !== false) {
-            $wb = @simplexml_load_string($wbXml);
+        if (($wbXml = $readZipXml('xl/workbook.xml')) !== false) {
+            $wb = @simplexml_load_string($wbXml, 'SimpleXMLElement', $xmlFlags);
             if ($wb && isset($wb->workbookPr['date1904'])) {
                 $flag       = strtolower(trim((string) $wb->workbookPr['date1904']));
                 $isDate1904 = in_array($flag, ['1', 'true'], true);
@@ -510,8 +630,8 @@ class ImportController extends Controller
         }
 
         $sharedStrings = [];
-        if (($ssXml = $zip->getFromName('xl/sharedStrings.xml')) !== false) {
-            $xml = @simplexml_load_string($ssXml);
+        if (($ssXml = $readZipXml('xl/sharedStrings.xml')) !== false) {
+            $xml = @simplexml_load_string($ssXml, 'SimpleXMLElement', $xmlFlags);
             if ($xml && isset($xml->si)) {
                 foreach ($xml->si as $si) {
                     if (isset($si->t)) {
@@ -529,14 +649,14 @@ class ImportController extends Controller
             }
         }
 
-        $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+        $sheetXml = $readZipXml('xl/worksheets/sheet1.xml');
         $zip->close();
 
         if ($sheetXml === false) {
             throw new \Exception('Lembar kerja utama tidak ditemukan di berkas .xlsx.');
         }
 
-        $xml  = @simplexml_load_string($sheetXml);
+        $xml  = @simplexml_load_string($sheetXml, 'SimpleXMLElement', $xmlFlags);
         $rows = [];
 
         if ($xml && isset($xml->sheetData->row)) {
@@ -627,6 +747,17 @@ class ImportController extends Controller
 
         $status = $this->normalizeStatusAbsensi((string) $row['status']);
 
+        if (in_array($status, ['izin', 'tidak_hadir'], true)) {
+            $jamCheckin  = null;
+            $jamCheckout = null;
+        } elseif (
+            $jamCheckin !== null
+            && $jamCheckout !== null
+            && substr($jamCheckout, 0, 5) < substr($jamCheckin, 0, 5)
+        ) {
+            throw new \Exception("Jam check-out ({$jamCheckout}) tidak boleh lebih awal dari jam check-in ({$jamCheckin}).");
+        }
+
         $existing = Absensi::where('instruktur_id', $instruktur->id)
             ->whereDate('tanggal', $tanggal)
             ->first();
@@ -688,34 +819,59 @@ class ImportController extends Controller
             $evaluatedAt      = Carbon::parse($parsedTs->format('Y-m-d H:i:s'));
         }
 
-        $nilai = null;
         if (isset($row['nilai']) && trim((string) $row['nilai']) !== '') {
             if (!is_numeric($row['nilai'])) {
                 throw new \Exception("Nilai evaluasi tidak valid: '{$row['nilai']}'.");
             }
-            $nilai = (float) $row['nilai'];
-        } else {
-            // Jika tidak ada kolom 'nilai' tunggal, hitung rata-rata dari kolom numerik jawaban jika tersedia
-            $numericAnswers = [];
-            foreach ($row as $k => $v) {
-                if (
-                    !in_array($k, ['nama_instruktur', 'kode_instruktur', 'nama_pengisi', 'tanggal', 'timestamp', 'jam', 'waktu'], true)
-                    && is_numeric($v)
-                ) {
-                    $numericAnswers[] = (float) $v;
-                }
-            }
-            if (!empty($numericAnswers)) {
-                $nilai = round(array_sum($numericAnswers) / count($numericAnswers), 2);
+            $numVal = (float) $row['nilai'];
+            if ($numVal < 0 || $numVal > 100) {
+                throw new \Exception("Nilai evaluasi di luar rentang 0-100: '{$row['nilai']}'.");
             }
         }
 
+        $evalCalc = $this->extractAndNormalizeEvaluasiScores($row);
+        $nilai    = $evalCalc['total_nilai'];
+
+        if ($this->checkDuplicateEvaluasiInDb($instruktur->id, $row, $nilai)) {
+            $pengisiLabel = !empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : 'Anonim';
+            throw new \Exception("Duplikat: Evaluasi untuk {$instruktur->nama_lengkap} dari '{$pengisiLabel}' sudah ada di database.");
+        }
+
+        $komentar = null;
+        foreach (['komentar', 'catatan_peserta', 'saran', 'catatan'] as $komKey) {
+            if (!empty($row[$komKey]) && trim((string) $row[$komKey]) !== '') {
+                $komentar = trim((string) $row[$komKey]);
+                break;
+            }
+        }
+
+        $materiEvaluasi = null;
+        foreach (['materi_evaluasi', 'materi', 'topik'] as $matKey) {
+            if (!empty($row[$matKey]) && trim((string) $row[$matKey]) !== '') {
+                $materiEvaluasi = trim((string) $row[$matKey]);
+                break;
+            }
+        }
+
+        $jawabanPayload = $row;
+        if (!empty($evalCalc['skor_indikator'])) {
+            $jawabanPayload['skor_indikator'] = $evalCalc['skor_indikator'];
+        }
+        if ($evalCalc['rata_rata_skala_5'] !== null) {
+            $jawabanPayload['rata_rata_skala_5'] = $evalCalc['rata_rata_skala_5'];
+        }
+        if ($komentar !== null && !isset($jawabanPayload['komentar'])) {
+            $jawabanPayload['komentar'] = $komentar;
+        }
+
         $evaluasi = new Evaluasi([
-            'instruktur_id' => $instruktur->id,
-            'nama_pengisi'  => !empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : null,
-            'total_nilai'   => $nilai,
-            'batch_import'  => $batchId,
-            'jawaban'       => $row,
+            'instruktur_id'   => $instruktur->id,
+            'nama_pengisi'    => !empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : null,
+            'materi_evaluasi' => $materiEvaluasi,
+            'total_nilai'     => $nilai,
+            'komentar'        => $komentar,
+            'batch_import'    => $batchId,
+            'jawaban'         => $jawabanPayload,
         ]);
 
         if ($evaluatedAt !== null) {
@@ -723,6 +879,148 @@ class ImportController extends Controller
         }
 
         $evaluasi->save();
+    }
+
+    /**
+     * Ekstrak nilai indikator dan normalisasikan total_nilai ke skala 0-100,
+     * baik ketika berkas berisi skala Likert 1-5 maupun skala 0-100.
+     *
+     * @return array{total_nilai: ?float, rata_rata_skala_5: ?float, skor_indikator: array<string, float>}
+     */
+    private function extractAndNormalizeEvaluasiScores(array $row): array
+    {
+        $indikatorAliases = [
+            'indikator_1' => ['indikator_1', 'penguasaan_materi', 'materi_score', 'skor_materi'],
+            'indikator_2' => ['indikator_2', 'cara_penyampaian', 'penyampaian', 'komunikasi', 'kejelasan_penyampaian'],
+            'indikator_3' => ['indikator_3', 'ketepatan_waktu', 'kedisiplinan', 'disiplin'],
+            'indikator_4' => ['indikator_4', 'interaksi', 'pendampingan_praktik', 'interaksi_praktik'],
+            'indikator_5' => ['indikator_5', 'sikap_profesional', 'sikap', 'keteladanan'],
+        ];
+
+        $rawIndikatorValues = [];
+        foreach ($indikatorAliases as $indKey => $aliases) {
+            foreach ($aliases as $alias) {
+                if (isset($row[$alias]) && trim((string) $row[$alias]) !== '' && is_numeric($row[$alias])) {
+                    $val = (float) $row[$alias];
+                    if ($val >= 0 && $val <= 100) {
+                        $rawIndikatorValues[$indKey] = $val;
+                        break;
+                    }
+                }
+            }
+        }
+
+        $otherNumeric = [];
+        $ignoredCols  = [
+            'nama_instruktur', 'kode_instruktur', 'nama_pengisi', 'tanggal',
+            'timestamp', 'jam', 'waktu', 'nilai', 'komentar', 'catatan_peserta',
+            'saran', 'catatan', 'materi', 'materi_evaluasi', 'kode', 'kode_kelas',
+        ];
+        foreach ($row as $k => $v) {
+            if (!in_array($k, $ignoredCols, true) && is_numeric($v)) {
+                $f = (float) $v;
+                if ($f >= 0 && $f <= 100) {
+                    $otherNumeric[] = $f;
+                }
+            }
+        }
+
+        // Jika tidak ada nama kolom indikator standar tetapi ada 1-5 kolom numerik pertanyaan, petakan berurutan
+        if (empty($rawIndikatorValues) && !empty($otherNumeric)) {
+            foreach (array_slice($otherNumeric, 0, 5) as $idx => $numVal) {
+                $rawIndikatorValues['indikator_' . ($idx + 1)] = $numVal;
+            }
+        }
+
+        $skorIndikatorSkala5 = [];
+        if (!empty($rawIndikatorValues)) {
+            $maxIndikator = max($rawIndikatorValues);
+            $isSkala5     = $maxIndikator <= 5.0;
+
+            foreach ($rawIndikatorValues as $indKey => $val) {
+                $skorIndikatorSkala5[$indKey] = $isSkala5
+                    ? round($val, 2)
+                    : round($val / 20.0, 2);
+            }
+        }
+
+        $explicitNilai = null;
+        if (isset($row['nilai']) && trim((string) $row['nilai']) !== '' && is_numeric($row['nilai'])) {
+            $explicitNilai = (float) $row['nilai'];
+        }
+
+        // Tentukan total_nilai (skala 0-100) dan rata_rata_skala_5 (skala 1-5)
+        if ($explicitNilai !== null) {
+            $isNilaiSkala5 = $explicitNilai > 0 && $explicitNilai <= 5.0
+                && (empty($rawIndikatorValues) || max($rawIndikatorValues) <= 5.0);
+
+            $totalNilai100 = $isNilaiSkala5
+                ? round($explicitNilai * 20.0, 2)
+                : round($explicitNilai, 2);
+
+            $rataSkala5 = !empty($skorIndikatorSkala5)
+                ? round(array_sum($skorIndikatorSkala5) / count($skorIndikatorSkala5), 2)
+                : round($totalNilai100 / 20.0, 2);
+        } elseif (!empty($rawIndikatorValues)) {
+            $avgRaw        = array_sum($rawIndikatorValues) / count($rawIndikatorValues);
+            $isSkala5      = max($rawIndikatorValues) <= 5.0;
+            $totalNilai100 = $isSkala5 ? round($avgRaw * 20.0, 2) : round($avgRaw, 2);
+            $rataSkala5    = $isSkala5 ? round($avgRaw, 2) : round($avgRaw / 20.0, 2);
+        } elseif (!empty($otherNumeric)) {
+            $avgOther      = array_sum($otherNumeric) / count($otherNumeric);
+            $isSkala5      = max($otherNumeric) <= 5.0;
+            $totalNilai100 = $isSkala5 ? round($avgOther * 20.0, 2) : round($avgOther, 2);
+            $rataSkala5    = round($totalNilai100 / 20.0, 2);
+        } else {
+            $totalNilai100 = null;
+            $rataSkala5    = null;
+        }
+
+        if (empty($skorIndikatorSkala5) && $rataSkala5 !== null) {
+            $skorIndikatorSkala5['indikator_1'] = $rataSkala5;
+        }
+
+        return [
+            'total_nilai'       => $totalNilai100,
+            'rata_rata_skala_5' => $rataSkala5,
+            'skor_indikator'    => $skorIndikatorSkala5,
+        ];
+    }
+
+    private function checkDuplicateEvaluasiInDb(int $instrukturId, array $row, ?float $totalNilai100): bool
+    {
+        $namaPengisi = !empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : null;
+        $komentar    = null;
+        foreach (['komentar', 'catatan_peserta', 'saran', 'catatan'] as $komKey) {
+            if (!empty($row[$komKey]) && trim((string) $row[$komKey]) !== '') {
+                $komentar = trim((string) $row[$komKey]);
+                break;
+            }
+        }
+
+        $query = Evaluasi::where('instruktur_id', $instrukturId);
+
+        if ($namaPengisi !== null) {
+            $query->where('nama_pengisi', $namaPengisi);
+        } else {
+            $query->whereNull('nama_pengisi');
+        }
+
+        if ($totalNilai100 !== null) {
+            $query->whereBetween('total_nilai', [$totalNilai100 - 0.01, $totalNilai100 + 0.01]);
+        } else {
+            $query->whereNull('total_nilai');
+        }
+
+        if ($komentar !== null) {
+            $query->where(function ($q) use ($komentar) {
+                $q->where('komentar', $komentar)
+                    ->orWhere('jawaban->catatan_peserta', $komentar)
+                    ->orWhere('jawaban->komentar', $komentar);
+            });
+        }
+
+        return $query->exists();
     }
 
     private function excelSerialToCarbon(float $serial, bool $isDate1904 = false): Carbon

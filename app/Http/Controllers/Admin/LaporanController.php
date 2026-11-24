@@ -302,6 +302,89 @@ class LaporanController extends Controller
         return $records->values();
     }
 
+    private function buildDistribusiChartFromQuery(string $jenis, Builder $baseQuery): array
+    {
+        $query = $baseQuery->clone()->with([])->reorder();
+
+        if (in_array($jenis, ['absensi', 'jadwal', 'aktivitas'], true)) {
+            $col    = $jenis === 'aktivitas' ? 'status_konfirmasi' : 'status';
+            $counts = $query->selectRaw("{$col} as bucket, COUNT(*) as total")
+                ->groupBy($col)
+                ->pluck('total', 'bucket');
+
+            return match ($jenis) {
+                'absensi' => [
+                    'title'  => 'Distribusi Status Kehadiran Instruktur',
+                    'labels' => ['Hadir Tepat Waktu', 'Terlambat', 'Izin', 'Tidak Hadir'],
+                    'series' => [
+                        (int) ($counts['hadir'] ?? 0),
+                        (int) ($counts['terlambat'] ?? 0),
+                        (int) ($counts['izin'] ?? 0),
+                        (int) ($counts['tidak_hadir'] ?? 0),
+                    ],
+                ],
+                'jadwal' => [
+                    'title'  => 'Distribusi Status Jadwal Mengajar',
+                    'labels' => ['Terjadwal', 'Sedang Berlangsung', 'Selesai', 'Dibatalkan'],
+                    'series' => [
+                        (int) ($counts['terjadwal'] ?? 0),
+                        (int) ($counts['berlangsung'] ?? 0),
+                        (int) ($counts['selesai'] ?? 0),
+                        (int) ($counts['dibatalkan'] ?? 0),
+                    ],
+                ],
+                'aktivitas' => [
+                    'title'  => 'Distribusi Status Laporan Aktivitas Mengajar',
+                    'labels' => ['Dikonfirmasi', 'Belum Dikonfirmasi', 'Tidak Terlaksana'],
+                    'series' => [
+                        (int) ($counts['dikonfirmasi'] ?? 0),
+                        (int) ($counts['belum_dikonfirmasi'] ?? 0),
+                        (int) ($counts['tidak_terlaksana'] ?? 0),
+                    ],
+                ],
+            };
+        }
+
+        if (in_array($jenis, ['evaluasi', 'observasi'], true)) {
+            $ruleConfig     = $this->kinerjaService->getRuleConfig();
+            $kategoriRanges = $this->kinerjaService->getKategoriRangeLabels($ruleConfig);
+            $sb             = (float) $ruleConfig['batas_sangat_baik'];
+            $b              = (float) $ruleConfig['batas_baik'];
+            $c              = (float) $ruleConfig['batas_cukup'];
+            $col            = $jenis === 'evaluasi' ? 'total_nilai' : 'skor_observasi';
+
+            $agg = $query->whereNotNull($col)
+                ->selectRaw(
+                    "SUM(CASE WHEN {$col} >= ? THEN 1 ELSE 0 END) as sb_count, "
+                    . "SUM(CASE WHEN {$col} >= ? AND {$col} < ? THEN 1 ELSE 0 END) as b_count, "
+                    . "SUM(CASE WHEN {$col} >= ? AND {$col} < ? THEN 1 ELSE 0 END) as c_count, "
+                    . "SUM(CASE WHEN {$col} < ? THEN 1 ELSE 0 END) as k_count",
+                    [$sb, $b, $sb, $c, $b, $c]
+                )
+                ->first();
+
+            return [
+                'title'  => $jenis === 'evaluasi'
+                    ? 'Distribusi Kategori Skor Evaluasi Peserta'
+                    : 'Distribusi Skor Observasi Supervisor',
+                'labels' => [
+                    $kategoriRanges['sangat_baik'],
+                    $kategoriRanges['baik'],
+                    $kategoriRanges['cukup'],
+                    $kategoriRanges['kurang'],
+                ],
+                'series' => [
+                    (int) ($agg->sb_count ?? 0),
+                    (int) ($agg->b_count ?? 0),
+                    (int) ($agg->c_count ?? 0),
+                    (int) ($agg->k_count ?? 0),
+                ],
+            ];
+        }
+
+        return ['title' => '', 'labels' => [], 'series' => []];
+    }
+
     private function buildDistribusiChart(string $jenis, Collection $allRows): array
     {
         $ruleConfig     = $this->kinerjaService->getRuleConfig();
@@ -564,7 +647,8 @@ class LaporanController extends Controller
             return $value;
         }
 
-        $text = preg_replace('/\s*\r?\n\s*|\r/', ' ', (string) ($value ?? ''));
+        $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', ' ', (string) ($value ?? ''));
+        $text = preg_replace('/\s*\r?\n\s*|\r|\t/', ' ', (string) $text);
         $text = trim((string) $text);
 
         if ($text === '') {
@@ -679,7 +763,7 @@ class LaporanController extends Controller
             $data             = $manajerialReport['kinerja_rows'];
         } else {
             $query           = $this->buildReportQuery($jenis, $dari, $sampai, $instrukturId, $statusFilter, $selectedKelas);
-            $distribusiChart = $this->buildDistribusiChart($jenis, $query->clone()->get());
+            $distribusiChart = $this->buildDistribusiChartFromQuery($jenis, $query);
             $data            = $query->paginate(20)->withQueryString();
         }
 
@@ -984,19 +1068,20 @@ class LaporanController extends Controller
 
             $sertRows = [];
             foreach ($rep['sertifikasis'] as $i => $s) {
+                $statusInfo = $s->status_info;
                 $sertRows[] = [
                     $i + 1,
                     $s->nama_sertifikasi,
-                    $s->nomor_sertifikat ?: '-',
-                    $s->penerbit ?: '-',
+                    $s->keterangan ?: '-',
+                    $s->file_name ?: '-',
                     $s->berlaku_sampai?->format('d/m/Y') ?? '-',
-                    $s->status_kedaluwarsa_label ?? '-',
+                    ($statusInfo['badge'] ?? 'Aktif') . (!empty($statusInfo['detail']) ? ' (' . $statusInfo['detail'] . ')' : ''),
                 ];
             }
 
             return [
                 ['name' => 'Ringkasan Rapor', 'headers' => ['Komponen', 'Nilai'], 'rows' => $summaryRows],
-                ['name' => 'Sertifikasi', 'headers' => ['No', 'Nama Sertifikasi', 'Nomor', 'Penerbit', 'Berlaku Sampai', 'Status'], 'rows' => $sertRows],
+                ['name' => 'Sertifikasi', 'headers' => ['No', 'Nama Sertifikasi', 'Keterangan / Penerbit', 'Berkas Dokumen', 'Berlaku Sampai', 'Status'], 'rows' => $sertRows],
                 array_merge(['name' => 'Jadwal'], $this->buildTabularDataset('jadwal', $rep['jadwals'])),
                 array_merge(['name' => 'Absensi'], $this->buildTabularDataset('absensi', $rep['absensis'])),
                 array_merge(['name' => 'Aktivitas'], $this->buildTabularDataset('aktivitas', $rep['aktivitas'])),

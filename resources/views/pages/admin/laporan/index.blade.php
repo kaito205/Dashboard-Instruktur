@@ -516,20 +516,23 @@
                                 <thead class="border-b border-gray-200 bg-gray-50 font-semibold text-gray-700 dark:border-gray-800 dark:bg-gray-800/60 dark:text-gray-200">
                                     <tr>
                                         <th class="px-3 py-2.5">Nama Sertifikasi</th>
-                                        <th class="px-3 py-2.5">Nomor</th>
-                                        <th class="px-3 py-2.5">Penerbit</th>
+                                        <th class="px-3 py-2.5">Keterangan / Penerbit</th>
+                                        <th class="px-3 py-2.5">Berkas Dokumen</th>
                                         <th class="px-3 py-2.5">Berlaku Sampai</th>
                                         <th class="px-3 py-2.5">Status</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-gray-200 dark:divide-gray-800">
                                     @forelse($individualReport['sertifikasis'] as $sert)
+                                        @php
+                                            $sertInfo = $sert->status_info;
+                                        @endphp
                                         <tr>
                                             <td class="px-3 py-2 font-medium text-gray-900 dark:text-white">{{ $sert->nama_sertifikasi }}</td>
-                                            <td class="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{{ $sert->nomor_sertifikat ?: '-' }}</td>
-                                            <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ $sert->penerbit ?: '-' }}</td>
+                                            <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ $sert->keterangan ?: '-' }}</td>
+                                            <td class="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{{ $sert->file_name ?: '-' }}</td>
                                             <td class="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{{ $sert->berlaku_sampai?->format('d/m/Y') ?? '-' }}</td>
-                                            <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ $sert->status_kedaluwarsa_label ?? '-' }}</td>
+                                            <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ ($sertInfo['badge'] ?? 'Aktif') . (!empty($sertInfo['detail']) ? ' (' . $sertInfo['detail'] . ')' : '') }}</td>
                                         </tr>
                                     @empty
                                         <tr><td colspan="5" class="px-3 py-4 text-center text-gray-500 dark:text-gray-400">Belum ada data sertifikasi tercatat.</td></tr>

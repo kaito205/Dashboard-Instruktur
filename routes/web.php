@@ -33,35 +33,13 @@ use App\Http\Controllers\Instruktur\EvaluasiController as InstrukturEvaluasiCont
 use App\Http\Controllers\Instruktur\RaporController as InstrukturRaporController;
 use App\Http\Controllers\Instruktur\ProfilController as InstrukturProfilController;
 use App\Http\Controllers\Instruktur\NotifikasiController as InstrukturNotifikasiController;
-use Illuminate\Support\Facades\Storage;
 
-// Melayani berkas dari disk public (foto profil, sertifikasi, dokumentasi) secara langsung pada Windows apabila symlink belum aktif.
-Route::get('/storage/{path}', function (string $path) {
-    $cleanPath = ltrim(str_replace('\\', '/', $path), '/');
-    abort_if($cleanPath === '' || str_contains($cleanPath, '..') || str_contains($cleanPath, "\0"), 404);
-    abort_if(
-        str_starts_with($cleanPath, 'instruktur/sertifikasi/')
-        || str_starts_with($cleanPath, 'aktivitas/dokumentasi/'),
-        403
-    );
-    abort_unless(Storage::disk('public')->exists($cleanPath), 404);
+// Melayani berkas dari disk public (foto profil) secara langsung pada Windows apabila symlink belum aktif.
+Route::get('/storage/{path}', [AuthController::class, 'servePublicStorage'])
+    ->where('path', '.*')
+    ->name('storage.public');
 
-    return Storage::disk('public')->response($cleanPath, null, [
-        'Cache-Control' => 'public, max-age=86400',
-    ]);
-})->where('path', '.*')->name('storage.public');
-
-Route::get('/', function () {
-    if (auth()->check() && auth()->user()->is_active) {
-        return match (auth()->user()->role) {
-            'admin'      => redirect()->route('admin.dashboard'),
-            'supervisor' => redirect()->route('supervisor.dashboard'),
-            'instruktur' => redirect()->route('instruktur.dashboard'),
-            default      => redirect()->route('login'),
-        };
-    }
-    return redirect()->route('login');
-});
+Route::get('/', [AuthController::class, 'home'])->name('home');
 
 // Portal Publik Evaluasi Peserta (Tanpa Login)
 Route::get('/evaluasi', [EvaluasiPublikController::class, 'index'])->name('evaluasi.publik.index');
