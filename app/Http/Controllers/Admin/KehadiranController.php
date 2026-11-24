@@ -279,6 +279,11 @@ class KehadiranController extends Controller
         }
 
         $jadwal = !empty($validated['jadwal_id']) ? Jadwal::find($validated['jadwal_id']) : null;
+        if ($jadwal && (int) $jadwal->instruktur_id !== (int) $validated['instruktur_id']) {
+            return back()
+                ->withInput()
+                ->withErrors(['jadwal_id' => 'Jadwal kelas yang dipilih tidak sesuai dengan instruktur yang dipilih.']);
+        }
         $jamMulaiJadwal = $jadwal ? substr((string) $jadwal->jam_mulai, 0, 5) : null;
         $menitTerlambat = 0;
 
@@ -381,9 +386,10 @@ class KehadiranController extends Controller
             $filePath = $aktivitas?->file_dokumentasi;
             if ($request->hasFile('file_dokumentasi')) {
                 if ($filePath) {
+                    Storage::disk('local')->delete($filePath);
                     Storage::disk('public')->delete($filePath);
                 }
-                $filePath = $request->file('file_dokumentasi')->store('aktivitas/dokumentasi', 'public');
+                $filePath = $request->file('file_dokumentasi')->store('aktivitas/dokumentasi', 'local');
             }
 
             $statusVerif = $validated['status_verifikasi'] ?? 'diverifikasi';
@@ -437,5 +443,21 @@ class KehadiranController extends Controller
         });
 
         return back()->with('success', "Verifikasi aktivitas mengajar berhasil disimpan ({$aktivitas->fresh()->verifikasi_label}).");
+    }
+
+    public function dokumenAktivitas(Request $request, AktivitasMengajar $aktivitas)
+    {
+        abort_unless(auth()->check() && auth()->user()->hasRole('admin', 'supervisor'), 403);
+
+        $disk = $aktivitas->resolveDokumentasiDisk();
+        abort_if($disk === null, 404);
+
+        $safeName = str_replace(['"', '\\', '/', "\r", "\n"], '_', basename($aktivitas->file_dokumentasi));
+
+        if ($request->boolean('download')) {
+            return Storage::disk($disk)->download($aktivitas->file_dokumentasi, $safeName);
+        }
+
+        return Storage::disk($disk)->response($aktivitas->file_dokumentasi, $safeName);
     }
 }

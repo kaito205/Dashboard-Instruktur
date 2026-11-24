@@ -22,6 +22,9 @@ class CheckRole
 
         if (!$user->is_active) {
             auth()->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
             return redirect()->route('login')->with('error', 'Akun Anda telah dinonaktifkan. Hubungi administrator.');
         }
 

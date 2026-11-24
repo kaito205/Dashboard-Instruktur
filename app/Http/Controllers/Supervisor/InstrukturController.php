@@ -87,17 +87,15 @@ class InstrukturController extends Controller
     {
         Gate::authorize('view', $instruktur);
         abort_unless($sertifikasi->instruktur_id === $instruktur->id, 404);
-        abort_unless(
-            !empty($sertifikasi->file_path) && Storage::disk('public')->exists($sertifikasi->file_path),
-            404
-        );
+        $disk = $sertifikasi->resolveStorageDisk();
+        abort_if($disk === null, 404);
 
         $safeName = str_replace(['"', '\\', '/', "\r", "\n"], '_', $sertifikasi->display_file_name ?: basename($sertifikasi->file_path));
 
         if ($request->boolean('download')) {
-            return Storage::disk('public')->download($sertifikasi->file_path, $safeName);
+            return Storage::disk($disk)->download($sertifikasi->file_path, $safeName);
         }
 
-        return Storage::disk('public')->response($sertifikasi->file_path, $safeName);
+        return Storage::disk($disk)->response($sertifikasi->file_path, $safeName);
     }
 }

@@ -72,9 +72,26 @@ class InstrukturSertifikasi extends Model
         ];
     }
 
+    public function resolveStorageDisk(): ?string
+    {
+        if (empty($this->file_path)) {
+            return null;
+        }
+
+        if (Storage::disk('local')->exists($this->file_path)) {
+            return 'local';
+        }
+
+        if (Storage::disk('public')->exists($this->file_path)) {
+            return 'public';
+        }
+
+        return null;
+    }
+
     public function getHasFileAttribute(): bool
     {
-        return ! empty($this->file_path) && Storage::disk('public')->exists($this->file_path);
+        return $this->resolveStorageDisk() !== null;
     }
 
     public function getDisplayFileNameAttribute(): string

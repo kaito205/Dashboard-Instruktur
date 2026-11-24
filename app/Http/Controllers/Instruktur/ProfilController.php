@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Instruktur;
 
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Instruktur\Concerns\ResolvesOwnInstruktur;
+use App\Models\InstrukturSertifikasi;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -93,5 +94,22 @@ class ProfilController extends Controller
         $user->update(['password' => Hash::make($request->password_baru)]);
 
         return back()->with('success', 'Password akun instruktur Anda berhasil diperbarui.');
+    }
+
+    public function dokumenSertifikasi(Request $request, InstrukturSertifikasi $sertifikasi)
+    {
+        $instruktur = $this->resolveOwnInstruktur();
+        abort_unless($instruktur !== null && (int) $sertifikasi->instruktur_id === (int) $instruktur->id, 403);
+
+        $disk = $sertifikasi->resolveStorageDisk();
+        abort_if($disk === null, 404);
+
+        $safeName = str_replace(['"', '\\', '/', "\r", "\n"], '_', $sertifikasi->display_file_name ?: basename($sertifikasi->file_path));
+
+        if ($request->boolean('download')) {
+            return Storage::disk($disk)->download($sertifikasi->file_path, $safeName);
+        }
+
+        return Storage::disk($disk)->response($sertifikasi->file_path, $safeName);
     }
 }

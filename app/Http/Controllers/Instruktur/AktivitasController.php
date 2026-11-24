@@ -43,7 +43,7 @@ class AktivitasController extends Controller
             ->whereIn('id', $dedupIdsQuery)
             ->when($dari !== '', fn ($q) => $q->whereDate('tanggal', '>=', $dari))
             ->when($sampai !== '', fn ($q) => $q->whereDate('tanggal', '<=', $sampai))
-            ->when($jadwalFilter !== '', fn ($q) => $q->where('jadwal_id', (int) $jadwalFilter));
+            ->when($jadwalFilter !== '', fn ($q) => $q->where('jadwal_id', (int) $jadwalFilter)->whereHas('jadwal', fn ($jq) => $jq->where('instruktur_id', $instrukturId)));
 
         if ($sort === 'terlama') {
             $query->orderBy('tanggal')->orderBy('id');
@@ -296,9 +296,10 @@ class AktivitasController extends Controller
             $filePath = $aktivitas?->file_dokumentasi;
             if ($request->hasFile('file_dokumentasi')) {
                 if ($filePath) {
+                    Storage::disk('local')->delete($filePath);
                     Storage::disk('public')->delete($filePath);
                 }
-                $filePath = $request->file('file_dokumentasi')->store('aktivitas/dokumentasi', 'public');
+                $filePath = $request->file('file_dokumentasi')->store('aktivitas/dokumentasi', 'local');
             }
 
             $payload = [
@@ -450,5 +451,22 @@ class AktivitasController extends Controller
             'sesiTerlaporPeriode',
             'persenKepatuhan'
         ));
+    }
+
+    public function dokumenAktivitas(Request $request, AktivitasMengajar $aktivitas)
+    {
+        $instruktur = $this->resolveOwnInstruktur();
+        abort_unless($instruktur !== null && (int) $aktivitas->instruktur_id === (int) $instruktur->id, 403);
+
+        $disk = $aktivitas->resolveDokumentasiDisk();
+        abort_if($disk === null, 404);
+
+        $safeName = str_replace(['"', '\\', '/', "\r", "\n"], '_', basename($aktivitas->file_dokumentasi));
+
+        if ($request->boolean('download')) {
+            return Storage::disk($disk)->download($aktivitas->file_dokumentasi, $safeName);
+        }
+
+        return Storage::disk($disk)->response($aktivitas->file_dokumentasi, $safeName);
     }
 }

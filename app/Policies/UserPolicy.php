@@ -8,23 +8,18 @@ class UserPolicy
 {
     public function viewAny(User $authUser): bool
     {
-        return $authUser->hasRole('admin', 'supervisor');
+        return $authUser->isAdmin();
     }
 
     public function create(User $authUser): bool
     {
-        return $authUser->hasRole('admin', 'supervisor');
+        return $authUser->isAdmin();
     }
 
     public function update(User $authUser, User $targetUser): bool
     {
         if ($authUser->isAdmin()) {
             return true;
-        }
-
-        // Supervisor hanya dapat mengelola akun instruktur atau miliknya sendiri
-        if ($authUser->isSupervisor()) {
-            return $targetUser->isInstruktur() || $authUser->id === $targetUser->id;
         }
 
         return $authUser->id === $targetUser->id;
@@ -46,15 +41,7 @@ class UserPolicy
             return false;
         }
 
-        if ($authUser->isAdmin()) {
-            return true;
-        }
-
-        if ($authUser->isSupervisor()) {
-            return $targetUser->isInstruktur();
-        }
-
-        return false;
+        return $authUser->isAdmin();
     }
 
     public function delete(User $authUser, User $targetUser): bool

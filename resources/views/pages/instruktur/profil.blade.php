@@ -124,8 +124,7 @@
                 <thead class="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:border-gray-800 dark:bg-gray-800/60 dark:text-gray-300">
                     <tr>
                         <th class="px-6 py-3">Nama Sertifikasi</th>
-                        <th class="px-6 py-3">Penerbit</th>
-                        <th class="px-6 py-3">Nomor</th>
+                        <th class="px-6 py-3">Keterangan</th>
                         <th class="px-6 py-3">Masa Berlaku</th>
                         <th class="px-6 py-3">Status</th>
                         <th class="px-6 py-3 text-right">Dokumen</th>
@@ -156,10 +155,7 @@
                                 {{ $sert->nama_sertifikasi }}
                             </td>
                             <td class="px-6 py-3.5 text-xs text-gray-700 dark:text-gray-300">
-                                {{ $sert->penerbit ?: '-' }}
-                            </td>
-                            <td class="px-6 py-3.5 font-mono text-xs text-gray-700 dark:text-gray-300">
-                                {{ $sert->nomor_sertifikat ?: '-' }}
+                                {{ $sert->keterangan ?: '-' }}
                             </td>
                             <td class="whitespace-nowrap px-6 py-3.5 font-mono text-xs text-gray-700 dark:text-gray-300">
                                 {{ $sert->berlaku_sampai ? $sert->berlaku_sampai->format('d/m/Y') : 'Tidak terbatas' }}
@@ -170,9 +166,9 @@
                                 </span>
                             </td>
                             <td class="whitespace-nowrap px-6 py-3.5 text-right text-xs">
-                                @if (!empty($sert->file_dokumen))
-                                    <a href="{{ asset('storage/' . $sert->file_dokumen) }}" target="_blank" rel="noopener"
-                                        class="inline-flex min-h-[36px] items-center font-semibold text-brand-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-300">
+                                @if ($sert->has_file)
+                                    <a href="{{ route('instruktur.profil.sertifikasi.dokumen', $sert) }}" target="_blank" rel="noopener"
+                                        class="inline-flex min-h-[44px] items-center font-semibold text-brand-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-300">
                                         Lihat Dokumen
                                     </a>
                                 @else
@@ -182,7 +178,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="6" class="px-6 py-8 text-center text-xs text-gray-600 dark:text-gray-300">
+                            <td colspan="5" class="px-6 py-8 text-center text-xs text-gray-600 dark:text-gray-300">
                                 Belum ada data sertifikasi yang tercatat. Hubungi Admin LPK untuk menambahkan sertifikasi.
                             </td>
                         </tr>

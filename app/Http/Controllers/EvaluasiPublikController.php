@@ -20,17 +20,25 @@ class EvaluasiPublikController extends Controller
         $kodeError    = null;
 
         if ($inputKode !== '') {
-            $kodeEvaluasi = KodeEvaluasi::with('instruktur')
-                ->whereRaw('UPPER(kode) = ?', [$inputKode])
-                ->first();
-
-            if (!$kodeEvaluasi) {
-                $kodeError = "Kode evaluasi kelas \"{$inputKode}\" tidak ditemukan. Pastikan kode yang Anda masukkan sesuai dengan kode yang diberikan instruktur atau admin kelas.";
-            } elseif (!$kodeEvaluasi->isValid()) {
-                $kodeError = "Kode evaluasi kelas \"{$inputKode}\" saat ini tidak aktif atau telah melampaui batas waktu/kuota pengisian.";
-                $kodeEvaluasi = null;
+            $lookupKey = 'evaluasi-lookup:' . ($request->ip() ?? '127.0.0.1');
+            if (RateLimiter::tooManyAttempts($lookupKey, 30)) {
+                $seconds = RateLimiter::availableIn($lookupKey);
+                $kodeError = "Terlalu banyak percobaan pencarian kode evaluasi. Silakan tunggu {$seconds} detik.";
             } else {
-                $sesiList = $this->groupSesiJadwal($kodeEvaluasi->resolveSesiJadwal());
+                $kodeEvaluasi = KodeEvaluasi::with('instruktur')
+                    ->whereRaw('UPPER(kode) = ?', [$inputKode])
+                    ->first();
+
+                if (!$kodeEvaluasi) {
+                    RateLimiter::hit($lookupKey, 60);
+                    $kodeError = "Kode evaluasi kelas \"{$inputKode}\" tidak ditemukan. Pastikan kode yang Anda masukkan sesuai dengan kode yang diberikan instruktur atau admin kelas.";
+                } elseif (!$kodeEvaluasi->isValid()) {
+                    RateLimiter::hit($lookupKey, 60);
+                    $kodeError = "Kode evaluasi kelas \"{$inputKode}\" saat ini tidak aktif atau telah melampaui batas waktu/kuota pengisian.";
+                    $kodeEvaluasi = null;
+                } else {
+                    $sesiList = $this->groupSesiJadwal($kodeEvaluasi->resolveSesiJadwal());
+                }
             }
         }
 
@@ -180,6 +188,8 @@ class EvaluasiPublikController extends Controller
         });
 
         if (isset($txResult['error'])) {
+            RateLimiter::hit($throttleKey, 60);
+
             return back()
                 ->withInput()
                 ->withErrors([$txResult['error_field'] => $txResult['error']]);

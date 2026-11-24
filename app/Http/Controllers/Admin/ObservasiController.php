@@ -97,6 +97,19 @@ class ObservasiController extends Controller
             'indikator_5.required'   => 'Skor Indikator 5 wajib dipilih (1-5).',
         ]);
 
+        $targetInstrukturId = array_key_exists('instruktur_id', $validated)
+            ? (int) $validated['instruktur_id']
+            : (int) $observasi->instruktur_id;
+
+        if (! empty($validated['jadwal_id'])) {
+            $jadwalSelected = Jadwal::find((int) $validated['jadwal_id']);
+            if (! $jadwalSelected || (int) $jadwalSelected->instruktur_id !== $targetInstrukturId) {
+                return back()
+                    ->withInput()
+                    ->withErrors(['jadwal_id' => 'Jadwal kelas yang dipilih tidak sesuai dengan instruktur yang diobservasi.']);
+            }
+        }
+
         $skorMap = [
             'indikator_1' => (int) $validated['indikator_1'],
             'indikator_2' => (int) $validated['indikator_2'],
@@ -155,6 +168,19 @@ class ObservasiController extends Controller
             'indikator_4.required'   => 'Skor Indikator 4 wajib dipilih (1-5).',
             'indikator_5.required'   => 'Skor Indikator 5 wajib dipilih (1-5).',
         ]);
+
+        $targetInstrukturId = array_key_exists('instruktur_id', $validated)
+            ? (int) $validated['instruktur_id']
+            : (int) $observasi->instruktur_id;
+
+        if (! empty($validated['jadwal_id'])) {
+            $jadwalSelected = Jadwal::find((int) $validated['jadwal_id']);
+            if (! $jadwalSelected || (int) $jadwalSelected->instruktur_id !== $targetInstrukturId) {
+                return back()
+                    ->withInput()
+                    ->withErrors(['jadwal_id' => 'Jadwal kelas yang dipilih tidak sesuai dengan instruktur yang diobservasi.']);
+            }
+        }
 
         $skorMap = [
             'indikator_1' => (int) $validated['indikator_1'],

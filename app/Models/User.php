@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 class User extends Authenticatable
@@ -42,6 +44,10 @@ class User extends Authenticatable
     {
         // Sinkronisasi otomatis perubahan akun instruktur ke tabel instrukturs
         static::saved(function (User $user) {
+            if (! $user->is_active) {
+                $user->revokeActiveSessions();
+            }
+
             if ($user->role === 'instruktur') {
                 $instruktur = Instruktur::withTrashed()
                     ->where('user_id', $user->id)
@@ -250,5 +256,21 @@ class User extends Authenticatable
     public function importHistories(): HasMany
     {
         return $this->hasMany(ImportHistory::class);
+    }
+
+    public function revokeActiveSessions(): void
+    {
+        if (! empty($this->remember_token)) {
+            $this->forceFill(['remember_token' => null])->saveQuietly();
+        }
+
+        try {
+            $table = config('session.table', 'sessions');
+            if (Schema::hasTable($table)) {
+                DB::table($table)->where('user_id', $this->id)->delete();
+            }
+        } catch (\Throwable) {
+            // Abaikan jika tabel session tidak tersedia pada driver non-database
+        }
     }
 }

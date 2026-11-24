@@ -39,6 +39,11 @@ use Illuminate\Support\Facades\Storage;
 Route::get('/storage/{path}', function (string $path) {
     $cleanPath = ltrim(str_replace('\\', '/', $path), '/');
     abort_if($cleanPath === '' || str_contains($cleanPath, '..') || str_contains($cleanPath, "\0"), 404);
+    abort_if(
+        str_starts_with($cleanPath, 'instruktur/sertifikasi/')
+        || str_starts_with($cleanPath, 'aktivitas/dokumentasi/'),
+        403
+    );
     abort_unless(Storage::disk('public')->exists($cleanPath), 404);
 
     return Storage::disk('public')->response($cleanPath, null, [
@@ -47,7 +52,7 @@ Route::get('/storage/{path}', function (string $path) {
 })->where('path', '.*')->name('storage.public');
 
 Route::get('/', function () {
-    if (auth()->check()) {
+    if (auth()->check() && auth()->user()->is_active) {
         return match (auth()->user()->role) {
             'admin'      => redirect()->route('admin.dashboard'),
             'supervisor' => redirect()->route('supervisor.dashboard'),
@@ -140,11 +145,12 @@ Route::prefix('admin')
         });
 
         Route::prefix('kehadiran')->name('kehadiran.')->group(function () {
-            Route::get('/',                                [AdminKehadiranController::class, 'index'])->name('index');
-            Route::post('/manual',                         [AdminKehadiranController::class, 'storeManual'])->name('manual');
-            Route::post('/auto-checkout',                  [AdminKehadiranController::class, 'autoCheckout'])->name('auto-checkout');
-            Route::post('/aktivitas',                      [AdminKehadiranController::class, 'storeAktivitas'])->name('aktivitas.store');
-            Route::post('/aktivitas/{aktivitas}/verifikasi', [AdminKehadiranController::class, 'verifikasi'])->name('verifikasi');
+            Route::get('/',                                     [AdminKehadiranController::class, 'index'])->name('index');
+            Route::post('/manual',                              [AdminKehadiranController::class, 'storeManual'])->name('manual');
+            Route::post('/auto-checkout',                       [AdminKehadiranController::class, 'autoCheckout'])->name('auto-checkout');
+            Route::post('/aktivitas',                           [AdminKehadiranController::class, 'storeAktivitas'])->name('aktivitas.store');
+            Route::get('/aktivitas/{aktivitas}/dokumentasi',    [AdminKehadiranController::class, 'dokumenAktivitas'])->name('aktivitas.dokumentasi');
+            Route::post('/aktivitas/{aktivitas}/verifikasi',    [AdminKehadiranController::class, 'verifikasi'])->name('verifikasi');
         });
 
         Route::prefix('import')->name('import.')->group(function () {
@@ -218,8 +224,9 @@ Route::prefix('supervisor')
         });
 
         Route::prefix('kehadiran')->name('kehadiran.')->group(function () {
-            Route::get('/',                                  [SupervisorKehadiranController::class, 'index'])->name('index');
-            Route::post('/aktivitas/{aktivitas}/verifikasi', [SupervisorKehadiranController::class, 'verifikasi'])->name('verifikasi');
+            Route::get('/',                                     [SupervisorKehadiranController::class, 'index'])->name('index');
+            Route::get('/aktivitas/{aktivitas}/dokumentasi',    [SupervisorKehadiranController::class, 'dokumenAktivitas'])->name('aktivitas.dokumentasi');
+            Route::post('/aktivitas/{aktivitas}/verifikasi',    [SupervisorKehadiranController::class, 'verifikasi'])->name('verifikasi');
         });
 
         Route::prefix('evaluasi')->name('evaluasi.')->group(function () {
@@ -272,12 +279,14 @@ Route::prefix('instruktur-panel')
         Route::get('/aktivitas', [InstrukturAktivitasController::class, 'index'])->name('aktivitas.index');
         Route::get('/aktivitas/export-excel', [InstrukturAktivitasController::class, 'exportExcel'])->name('aktivitas.export.excel');
         Route::get('/aktivitas/export-pdf', [InstrukturAktivitasController::class, 'exportPdf'])->name('aktivitas.export.pdf');
+        Route::get('/aktivitas/{aktivitas}/dokumentasi', [InstrukturAktivitasController::class, 'dokumenAktivitas'])->name('aktivitas.dokumentasi');
         Route::put('/aktivitas/{jadwal}', [InstrukturAktivitasController::class, 'update'])->name('aktivitas.update');
         Route::get('/evaluasi', [InstrukturEvaluasiController::class, 'index'])->name('evaluasi.index');
         Route::get('/rapor', [InstrukturRaporController::class, 'index'])->name('rapor.index');
         Route::get('/profil', [InstrukturProfilController::class, 'index'])->name('profil.index');
         Route::put('/profil', [InstrukturProfilController::class, 'update'])->name('profil.update');
         Route::put('/profil/password', [InstrukturProfilController::class, 'updatePassword'])->name('profil.password');
+        Route::get('/profil/sertifikasi/{sertifikasi}/dokumen', [InstrukturProfilController::class, 'dokumenSertifikasi'])->name('profil.sertifikasi.dokumen');
 
         Route::prefix('notifikasi')->name('notifikasi.')->group(function () {
             Route::get('/',              [InstrukturNotifikasiController::class, 'index'])->name('index');

@@ -100,7 +100,7 @@ class InstrukturController extends Controller
             if ($request->hasFile('file_sertifikasi')) {
                 $fileSertifikasiName     = $request->file('file_sertifikasi')->getClientOriginalName();
                 $data['file_sertifikasi'] = $request->file('file_sertifikasi')
-                    ->store('instruktur/sertifikasi', 'public');
+                    ->store('instruktur/sertifikasi', 'local');
             }
 
             if ($akunMode === 'auto') {
@@ -287,7 +287,7 @@ class InstrukturController extends Controller
             $uploadedCertPath = null;
             if ($hasCertInput && $request->hasFile('file_sertifikasi')) {
                 $uploadedCertName        = $request->file('file_sertifikasi')->getClientOriginalName();
-                $uploadedCertPath        = $request->file('file_sertifikasi')->store('instruktur/sertifikasi', 'public');
+                $uploadedCertPath        = $request->file('file_sertifikasi')->store('instruktur/sertifikasi', 'local');
                 $data['file_sertifikasi'] = $uploadedCertPath;
             } else {
                 unset($data['file_sertifikasi']);
@@ -328,12 +328,16 @@ class InstrukturController extends Controller
             if ($instrukturFresh->user) {
                 $emailSync = $instrukturFresh->email;
                 $canSyncEmail = !empty($emailSync) && !User::where('email', $emailSync)->where('id', '!=', $instrukturFresh->user_id)->exists();
+                $isActiveNow = $instrukturFresh->status === 'aktif';
                 $instrukturFresh->user->updateQuietly([
                     'name'        => $instrukturFresh->nama_lengkap,
                     'email'       => $canSyncEmail ? $emailSync : $instrukturFresh->user->email,
                     'foto_profil' => $instrukturFresh->foto_profil ?: $instrukturFresh->user->foto_profil,
-                    'is_active'   => $instrukturFresh->status === 'aktif',
+                    'is_active'   => $isActiveNow,
                 ]);
+                if (! $isActiveNow) {
+                    $instrukturFresh->user->revokeActiveSessions();
+                }
             }
 
             $snapshotBaru = $instrukturFresh->only($trackedFields);
@@ -426,7 +430,7 @@ class InstrukturController extends Controller
             if ($request->hasFile('file_sertifikasi')) {
                 $file     = $request->file('file_sertifikasi');
                 $fileName = $file->getClientOriginalName();
-                $filePath = $file->store('instruktur/sertifikasi', 'public');
+                $filePath = $file->store('instruktur/sertifikasi', 'local');
             }
 
             $sertifikasi = $instruktur->sertifikasis()->create([
@@ -499,7 +503,7 @@ class InstrukturController extends Controller
             if ($request->hasFile('file_sertifikasi')) {
                 $file     = $request->file('file_sertifikasi');
                 $fileName = $file->getClientOriginalName();
-                $filePath = $file->store('instruktur/sertifikasi', 'public');
+                $filePath = $file->store('instruktur/sertifikasi', 'local');
             }
 
             $sertifikasi->update([
@@ -573,18 +577,16 @@ class InstrukturController extends Controller
     {
         Gate::authorize('view', $instruktur);
         abort_unless($sertifikasi->instruktur_id === $instruktur->id, 404);
-        abort_unless(
-            !empty($sertifikasi->file_path) && Storage::disk('public')->exists($sertifikasi->file_path),
-            404
-        );
+        $disk = $sertifikasi->resolveStorageDisk();
+        abort_if($disk === null, 404);
 
         $safeName = str_replace(['"', '\\', '/', "\r", "\n"], '_', $sertifikasi->display_file_name ?: basename($sertifikasi->file_path));
 
         if ($request->boolean('download')) {
-            return Storage::disk('public')->download($sertifikasi->file_path, $safeName);
+            return Storage::disk($disk)->download($sertifikasi->file_path, $safeName);
         }
 
-        return Storage::disk('public')->response($sertifikasi->file_path, $safeName);
+        return Storage::disk($disk)->response($sertifikasi->file_path, $safeName);
     }
 
     public function toggleStatus(Instruktur $instruktur)
@@ -595,6 +597,9 @@ class InstrukturController extends Controller
         $newStatus = $oldStatus === 'aktif' ? 'nonaktif' : 'aktif';
         $instruktur->update(['status' => $newStatus]);
         $instruktur->user?->updateQuietly(['is_active' => $newStatus === 'aktif']);
+        if ($newStatus !== 'aktif') {
+            $instruktur->user?->revokeActiveSessions();
+        }
 
         InstrukturAuditLog::create([
             'instruktur_id'       => $instruktur->id,
@@ -616,6 +621,7 @@ class InstrukturController extends Controller
         DB::transaction(function () use ($instruktur) {
             $instruktur->update(['status' => 'nonaktif']);
             $instruktur->user?->updateQuietly(['is_active' => false]);
+            $instruktur->user?->revokeActiveSessions();
 
             InstrukturAuditLog::create([
                 'instruktur_id'       => $instruktur->id,
@@ -675,6 +681,7 @@ class InstrukturController extends Controller
             ->exists();
 
         if (! $stillReferenced) {
+            Storage::disk('local')->delete($filePath);
             Storage::disk('public')->delete($filePath);
         }
     }

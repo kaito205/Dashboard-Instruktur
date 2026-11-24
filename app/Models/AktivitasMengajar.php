@@ -5,6 +5,7 @@ namespace App\Models;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Storage;
 
 class AktivitasMengajar extends Model
 {
@@ -164,9 +165,37 @@ class AktivitasMengajar extends Model
         return null;
     }
 
+    public function resolveDokumentasiDisk(): ?string
+    {
+        if (empty($this->file_dokumentasi)) {
+            return null;
+        }
+
+        if (Storage::disk('local')->exists($this->file_dokumentasi)) {
+            return 'local';
+        }
+
+        if (Storage::disk('public')->exists($this->file_dokumentasi)) {
+            return 'public';
+        }
+
+        return null;
+    }
+
     public function getDokumentasiUrlAttribute(): ?string
     {
-        return $this->file_dokumentasi ? asset('storage/' . $this->file_dokumentasi) : null;
+        if (empty($this->file_dokumentasi)) {
+            return null;
+        }
+
+        $role = auth()->user()?->role;
+
+        return match ($role) {
+            'admin'      => route('admin.kehadiran.aktivitas.dokumentasi', $this),
+            'supervisor' => route('supervisor.kehadiran.aktivitas.dokumentasi', $this),
+            'instruktur' => route('instruktur.aktivitas.dokumentasi', $this),
+            default      => null,
+        };
     }
 
     public function jadwal(): BelongsTo
