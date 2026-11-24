@@ -191,31 +191,42 @@ class DashboardController extends Controller
 
         if ($selectedInstructor !== 'all' && $selectedInstructor !== '') {
             $filterInsId = (int) $selectedInstructor;
-            $alerts['items_aktif'] = collect($alerts['items_aktif'] ?? [])
-                ->filter(fn (array $item): bool => (int) ($item['instruktur_id'] ?? 0) === $filterInsId)
-                ->values();
-            $alerts['items_perlu_tinjauan'] = $alerts['items_aktif']
-                ->filter(fn (array $item): bool => in_array($item['level'] ?? '', ['critical', 'warning'], true))
-                ->values();
-            $alerts['items_info'] = $alerts['items_aktif']
-                ->filter(fn (array $item): bool => ($item['level'] ?? '') === 'info')
-                ->values();
+            $filterByIns = fn (array $item): bool => (int) ($item['instruktur_id'] ?? 0) === $filterInsId;
+
+            $alerts['items_aktif']                  = collect($alerts['items_aktif'] ?? [])->filter($filterByIns)->values();
+            $alerts['items_perlu_tinjauan']         = $alerts['items_aktif']->filter(fn (array $item): bool => in_array($item['level'] ?? '', ['critical', 'warning'], true))->values();
+            $alerts['items_info']                   = $alerts['items_aktif']->filter(fn (array $item): bool => ($item['level'] ?? '') === 'info')->values();
+            $alerts['items_faktual']                = collect($alerts['items_faktual'] ?? [])->filter($filterByIns)->values();
+            $alerts['items_faktual_perlu_tinjauan'] = $alerts['items_faktual']->filter(fn (array $item): bool => in_array($item['level'] ?? '', ['critical', 'warning'], true))->values();
+            $alerts['items_faktual_info']           = $alerts['items_faktual']->filter(fn (array $item): bool => ($item['level'] ?? '') === 'info')->values();
+
             if (isset($alerts['feed'])) {
-                $alerts['feed'] = collect($alerts['feed'])
-                    ->filter(fn (array $item): bool => (int) ($item['instruktur_id'] ?? 0) === $filterInsId)
-                    ->values();
+                $alerts['feed'] = collect($alerts['feed'])->filter($filterByIns)->values();
             }
-            $alerts['total_peringatan']  = $alerts['items_perlu_tinjauan']->count();
-            $alerts['total_info']        = $alerts['items_info']->count();
-            $alerts['total_semua_aktif'] = $alerts['items_aktif']->count();
+
+            $alerts['total_peringatan']         = $alerts['items_perlu_tinjauan']->count();
+            $alerts['total_info']               = $alerts['items_info']->count();
+            $alerts['total_semua_aktif']        = $alerts['items_aktif']->count();
+            $alerts['total_faktual_peringatan'] = $alerts['items_faktual_perlu_tinjauan']->count();
+            $alerts['total_faktual_info']       = $alerts['items_faktual_info']->count();
+            $alerts['total_faktual_semua']      = $alerts['items_faktual']->count();
         }
 
-        $activeAlertItems = collect($alerts['items_perlu_tinjauan'] ?? $alerts['items_aktif'] ?? []);
+        // Gunakan kondisi operasional faktual untuk panel Dashboard agar Admin & Supervisor selalu sinkron 100%
+        // dengan metrik Peringkat Instruktur / Kinerja walaupun lonceng notifikasi sudah pernah ditandai dibaca.
+        $dashboardReviewItems = collect($alerts['items_faktual_perlu_tinjauan'] ?? $alerts['items_perlu_tinjauan'] ?? $alerts['items_aktif'] ?? []);
+        $dashboardTableItems  = collect($alerts['items_faktual'] ?? $alerts['items_aktif'] ?? []);
+        $dashboardInfoCount   = (int) ($alerts['total_faktual_info'] ?? $alerts['total_info'] ?? 0);
+
+        $alerts['dashboard_items']            = $dashboardTableItems;
+        $alerts['dashboard_total_peringatan'] = $dashboardReviewItems->count();
+        $alerts['dashboard_total_info']       = $dashboardInfoCount;
+
         $alertCategorySummary = [
-            'kelas_tanpa_laporan'        => $activeAlertItems->whereIn('kategori', ['Jurnal', 'Kehadiran'])->count(),
-            'sertifikasi_hampir_expired' => $activeAlertItems->where('kategori', 'Sertifikasi')->count(),
-            'instruktur_dibawah_standar' => $activeAlertItems->where('kategori', 'Kinerja')->count(),
-            'pengingat_info'             => (int) ($alerts['total_info'] ?? 0),
+            'kelas_tanpa_laporan'        => $dashboardReviewItems->whereIn('kategori', ['Jurnal', 'Kehadiran'])->count(),
+            'sertifikasi_hampir_expired' => $dashboardReviewItems->where('kategori', 'Sertifikasi')->count(),
+            'instruktur_dibawah_standar' => $dashboardReviewItems->where('kategori', 'Kinerja')->count(),
+            'pengingat_info'             => $dashboardInfoCount,
         ];
 
         $isKinerjaRuleConfirmed = $this->kinerjaService->isRuleConfirmed();

@@ -561,7 +561,7 @@ class LaporanController extends Controller
 
         $roleContext = $this->routePrefix === 'supervisor' ? 'supervisor' : 'admin';
         $alerts      = $this->alertService->getSummaryAlerts($dari, $sampai, $roleContext);
-        $alertItems  = collect($alerts['items_perlu_tinjauan'] ?? $alerts['items_aktif'] ?? []);
+        $alertItems  = collect($alerts['items_faktual_perlu_tinjauan'] ?? $alerts['items_perlu_tinjauan'] ?? $alerts['items_aktif'] ?? []);
 
         if ($instrukturId !== '') {
             $filterInsId = (int) $instrukturId;

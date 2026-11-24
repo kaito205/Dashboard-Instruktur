@@ -8,6 +8,7 @@ use App\Models\Instruktur;
 use App\Models\InstrukturSertifikasi;
 use App\Models\Jadwal;
 use App\Models\NotifikasiTinjauan;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -350,8 +351,15 @@ class OperationalAlertService
             ->values();
         $allCurrentByKey = $allCurrentItems->keyBy('alert_key');
 
-        $reviewedRecords = $this->getReviewedRecords($resolvedUserId);
+        $reviewedRecords = $this->getReviewedRecords($resolvedUserId, $prefix);
         $reviewedKeys    = $reviewedRecords->pluck('alert_key')->flip();
+
+        $itemsFaktualPerluTinjauan = $allCurrentItems
+            ->filter(fn (array $item) => in_array($item['level'] ?? '', ['critical', 'warning'], true))
+            ->values();
+        $itemsFaktualInfo = $allCurrentItems
+            ->filter(fn (array $item) => ($item['level'] ?? '') === 'info')
+            ->values();
 
         $itemsAktif = $allCurrentItems
             ->filter(fn (array $item) => ! $reviewedKeys->has($item['alert_key']))
@@ -382,7 +390,7 @@ class OperationalAlertService
             ];
         })->values();
 
-        // Filter daftar per-kategori agar konsisten dengan status tinjauan di Dashboard & ringkasan
+        // Filter daftar per-kategori untuk Pusat Notifikasi & Lonceng Header
         $aktivitasAktif = $aktivitasBelumDikonfirmasiAll
             ->filter(fn (array $akt) => ! $reviewedKeys->has($akt['alert_key']))
             ->values();
@@ -400,22 +408,28 @@ class OperationalAlertService
         $jadwalBesokReviewed = $reviewedKeys->has("jadwal_besok:{$besokStr}");
 
         $result = [
-            'kelas_tanpa_laporan'      => $aktivitasAktif,
-            'eskalasi_2x24_jam'        => $eskalasiAktif,
-            'sertifikasi_expired'      => $sertifikasiAktif,
-            'instruktur_bawah_standar' => $kinerjaRendahAktif,
-            'belum_checkout'           => $belumCheckoutAktif,
-            'jadwal_besok_count'       => $jadwalBesokReviewed ? 0 : $jadwalBesokCount,
-            'hari_besok'               => $hariBesok,
-            'feed'                     => $itemsAktif->all(),
-            'items_aktif'              => $itemsAktif,
-            'items_perlu_tinjauan'     => $itemsPerluTinjauan,
-            'items_info'               => $itemsInfo,
-            'items_riwayat'            => $itemsRiwayat,
-            'total_peringatan'         => $itemsPerluTinjauan->count(),
-            'total_info'               => $itemsInfo->count(),
-            'total_semua_aktif'        => $itemsAktif->count(),
-            'total_riwayat'            => $itemsRiwayat->count(),
+            'kelas_tanpa_laporan'            => $aktivitasAktif,
+            'eskalasi_2x24_jam'              => $eskalasiAktif,
+            'sertifikasi_expired'            => $sertifikasiAktif,
+            'instruktur_bawah_standar'       => $kinerjaRendahAktif,
+            'belum_checkout'                 => $belumCheckoutAktif,
+            'jadwal_besok_count'             => $jadwalBesokReviewed ? 0 : $jadwalBesokCount,
+            'hari_besok'                     => $hariBesok,
+            'feed'                           => $itemsAktif->all(),
+            'items_aktif'                    => $itemsAktif,
+            'items_perlu_tinjauan'           => $itemsPerluTinjauan,
+            'items_info'                     => $itemsInfo,
+            'items_faktual'                  => $allCurrentItems,
+            'items_faktual_perlu_tinjauan'   => $itemsFaktualPerluTinjauan,
+            'items_faktual_info'             => $itemsFaktualInfo,
+            'items_riwayat'                  => $itemsRiwayat,
+            'total_peringatan'               => $itemsPerluTinjauan->count(),
+            'total_info'                     => $itemsInfo->count(),
+            'total_semua_aktif'              => $itemsAktif->count(),
+            'total_faktual_peringatan'       => $itemsFaktualPerluTinjauan->count(),
+            'total_faktual_info'             => $itemsFaktualInfo->count(),
+            'total_faktual_semua'            => $allCurrentItems->count(),
+            'total_riwayat'                  => $itemsRiwayat->count(),
         ];
 
         static::$memo[$memoKey] = $result;
@@ -492,7 +506,9 @@ class OperationalAlertService
             return false;
         }
 
-        $deleted = NotifikasiTinjauan::where('user_id', $userId)
+        $userIds = $this->resolveSharedOperationalUserIds($userId);
+
+        $deleted = NotifikasiTinjauan::whereIn('user_id', $userIds)
             ->where('alert_key', $alertKey)
             ->delete() > 0;
 
@@ -847,15 +863,47 @@ class OperationalAlertService
         return $normalized;
     }
 
-    private function getReviewedRecords(?int $userId): Collection
+    private function resolveSharedOperationalUserIds(?int $userId, ?string $role = null): array
+    {
+        if ($role === 'instruktur') {
+            return $userId ? [$userId] : [];
+        }
+
+        if ($role === null && $userId) {
+            $userRole = User::whereKey($userId)->value('role');
+            if ($userRole === 'instruktur') {
+                return [$userId];
+            }
+        }
+
+        $sharedIds = User::whereIn('role', ['admin', 'supervisor'])
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($userId && ! in_array($userId, $sharedIds, true)) {
+            $sharedIds[] = $userId;
+        }
+
+        return $sharedIds;
+    }
+
+    private function getReviewedRecords(?int $userId, ?string $role = null): Collection
     {
         if (! $userId || ! Schema::hasTable('notifikasi_tinjauans')) {
             return collect();
         }
 
-        return NotifikasiTinjauan::where('user_id', $userId)
+        $userIds = $this->resolveSharedOperationalUserIds($userId, $role);
+        if (empty($userIds)) {
+            return collect();
+        }
+
+        return NotifikasiTinjauan::whereIn('user_id', $userIds)
             ->orderByDesc('ditinjau_pada')
-            ->limit(100)
-            ->get();
+            ->limit(150)
+            ->get()
+            ->unique('alert_key')
+            ->values();
     }
 }

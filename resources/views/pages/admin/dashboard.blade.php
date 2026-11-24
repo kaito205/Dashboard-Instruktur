@@ -249,13 +249,13 @@
                     <div>
                         <h2 class="text-base font-semibold text-gray-900 dark:text-white">Peringatan Operasional</h2>
                         <p class="text-xs text-gray-600 dark:text-gray-300">
-                            Total <span data-alert-count class="font-mono font-semibold text-gray-900 dark:text-white">{{ $alerts['total_peringatan'] ?? 0 }}</span> item perlu tinjauan
+                            Total <span data-alert-count class="font-mono font-semibold text-gray-900 dark:text-white">{{ $alerts['dashboard_total_peringatan'] ?? $alerts['total_peringatan'] ?? 0 }}</span> item perlu tinjauan
                         </p>
                     </div>
-                    @if (($alerts['total_info'] ?? 0) > 0)
+                    @if (($alerts['dashboard_total_info'] ?? $alerts['total_info'] ?? 0) > 0)
                         <span class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
                             <span class="inline-flex h-1.5 w-1.5 rounded-full bg-brand-600"></span>
-                            {{ $alerts['total_info'] }} pengingat jadwal
+                            {{ $alerts['dashboard_total_info'] ?? $alerts['total_info'] }} pengingat jadwal
                         </span>
                     @endif
                 </div>
@@ -289,7 +289,7 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200 dark:divide-gray-800">
-                        @forelse (($alerts['items_aktif'] ?? collect())->take(5) as $alertItem)
+                        @forelse (($alerts['dashboard_items'] ?? $alerts['items_aktif'] ?? collect())->take(5) as $alertItem)
                             <tr data-alert-row="{{ $alertItem['alert_key'] }}" data-alert-level="{{ $alertItem['level'] }}">
                                 <td class="px-3 py-2.5 whitespace-nowrap">
                                     @if (($alertItem['level'] ?? '') === 'info')

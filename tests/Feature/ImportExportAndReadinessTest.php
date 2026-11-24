@@ -370,5 +370,27 @@ class ImportExportAndReadinessTest extends TestCase
             ->assertOk()
             ->assertSee('Budi Santoso belum mengisi jurnal')
             ->assertSee('Terlambat 5 hari');
+
+        // Meskipun Supervisor menandai semua notifikasi sudah dibaca di Pusat Notifikasi,
+        // kartu dan tabel Peringatan Operasional di Dashboard Supervisor & Admin tetap menampilkan
+        // angka faktual yang sama sampai masalah operasionalnya benar-benar diselesaikan.
+        $this->actingAs($this->supervisor)->post(route('supervisor.notifikasi.tinjau-semua'), [
+            'dari'   => $dari,
+            'sampai' => $sampai,
+        ])->assertRedirect();
+
+        $adminDash = $this->actingAs($this->admin)->get(route('admin.dashboard', ['periode' => 'kustom', 'dari' => $dari, 'sampai' => $sampai]));
+        $spvDash   = $this->actingAs($this->supervisor)->get(route('supervisor.dashboard', ['periode' => 'kustom', 'dari' => $dari, 'sampai' => $sampai]));
+
+        $adminDash->assertOk();
+        $spvDash->assertOk();
+
+        $this->assertEquals(
+            $adminDash->viewData('alertCategorySummary'),
+            $spvDash->viewData('alertCategorySummary')
+        );
+        $this->assertEquals(1, $spvDash->viewData('alerts')['dashboard_total_peringatan']);
+        $spvDash->assertSee('Budi Santoso belum mengisi jurnal');
+        $spvDash->assertSee('/supervisor/kehadiran');
     }
 }
