@@ -335,7 +335,7 @@ class JadwalController extends Controller
 
         DB::transaction(function () use ($request, $ruanganNorm, $isPolaMingguan) {
             $validated = $request->validated();
-            if ($isPolaMingguan && !$request->filled('tanggal')) {
+            if ($isPolaMingguan) {
                 $validated['tanggal'] = null;
             }
             $validated['ruangan'] = $ruanganNorm !== '' ? $ruanganNorm : null;
@@ -395,7 +395,7 @@ class JadwalController extends Controller
         DB::transaction(function () use ($request, $jadwal, $ruanganNorm, $isPolaMingguan) {
             $materiJadwalLama = $jadwal->materi;
             $validated = $request->validated();
-            if ($isPolaMingguan && !$request->filled('tanggal')) {
+            if ($isPolaMingguan) {
                 $validated['tanggal'] = null;
             }
             $validated['ruangan'] = $ruanganNorm !== '' ? $ruanganNorm : null;
@@ -450,6 +450,12 @@ class JadwalController extends Controller
     public function alihkan(Request $request, Jadwal $jadwal)
     {
         $this->authorizeWriteJadwal();
+
+        if (in_array($jadwal->status, ['selesai', 'dibatalkan'], true)) {
+            return back()->withErrors([
+                'alasan_pengalihan' => "Jadwal yang sudah berstatus {$jadwal->status_label} tidak dapat dialihkan.",
+            ]);
+        }
 
         $isPolaMingguan = (bool) $jadwal->is_pola_mingguan;
 

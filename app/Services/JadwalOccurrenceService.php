@@ -209,7 +209,7 @@ class JadwalOccurrenceService
 
         $byJadwalTanggal = [];
         foreach ($aktivitas as $akt) {
-            if ($akt->jadwal_id !== null && $akt->tanggal) {
+            if ($akt->jadwal_id !== null && $akt->tanggal && ($akt->status_konfirmasi ?? 'belum_dikonfirmasi') !== 'belum_dikonfirmasi') {
                 $byJadwalTanggal[$akt->jadwal_id . '|' . $akt->tanggal->toDateString()] = true;
             }
         }

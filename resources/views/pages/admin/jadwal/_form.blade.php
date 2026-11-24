@@ -110,10 +110,10 @@
                     @endforeach
                 </select>
             </div>
-            <div>
+            <div x-show="!isPolaMingguan" x-cloak>
                 <label for="tanggal" class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-200">Tanggal Spesifik (untuk Sesi Sekali)</label>
-                <input type="date" id="tanggal" name="tanggal" value="{{ old('tanggal', $isEdit ? $jadwal->tanggal?->format('Y-m-d') : date('Y-m-d')) }}"
-                       class="min-h-[44px] w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+                <input type="date" id="tanggal" name="tanggal" :disabled="isPolaMingguan" value="{{ old('tanggal', $isEdit ? $jadwal->tanggal?->format('Y-m-d') : date('Y-m-d')) }}"
+                       class="min-h-[44px] w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed dark:border-gray-700 dark:bg-gray-800 dark:text-white">
             </div>
             <div>
                 <label for="jam_mulai" class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-200">Jam Mulai <span class="text-red-600 dark:text-red-300">*</span></label>

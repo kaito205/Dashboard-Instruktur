@@ -107,6 +107,11 @@ class Absensi extends Model
                     'is_auto_checkout' => true,
                     'keterangan'       => $catatanLama !== '' ? $catatanLama . ' | ' . $catatanAuto : $catatanAuto,
                 ]);
+
+                if ($absensi->jadwal && ! $absensi->jadwal->is_pola_mingguan && $absensi->jadwal->status === 'berlangsung') {
+                    $absensi->jadwal->update(['status' => 'selesai']);
+                }
+
                 $closedCount++;
             }
         }
@@ -148,11 +153,21 @@ class Absensi extends Model
         }
 
         if ($this->latitude_checkin !== null && $this->longitude_checkin !== null) {
+            $lokasi = $this->lokasi_checkin_info;
+            if ($lokasi !== null && ! $lokasi['dalam_radius']) {
+                return [
+                    'code'   => 'diluar_radius',
+                    'label'  => 'Di Luar Radius (' . $lokasi['jarak_ringkas'] . ')',
+                    'color'  => 'amber',
+                    'detail' => $lokasi['nama_lokasi'] . ' (' . $lokasi['jarak_label'] . ', batas ' . $lokasi['radius_meter'] . ' m)',
+                ];
+            }
+
             return [
                 'code'   => 'terdeteksi',
                 'label'  => 'Terdeteksi',
                 'color'  => 'emerald',
-                'detail' => null,
+                'detail' => $lokasi['jarak_label'] ?? null,
             ];
         }
 

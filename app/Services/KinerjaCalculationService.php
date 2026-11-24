@@ -231,21 +231,28 @@ class KinerjaCalculationService
             ->sum(fn ($j) => Carbon::parse($j->jam_mulai)->diffInMinutes(Carbon::parse($j->jam_selesai)) / 60);
         $totalJamMengajar = round($totalJamMengajar, 1);
 
-        $totalCatatanAktivitas      = $aktivitas->count();
-        $totalAktivitasDikonfirmasi = $aktivitas->where('status_konfirmasi', 'dikonfirmasi')->count();
-        $totalAktivitasDiverifikasi = $aktivitas->where('status_verifikasi', 'diverifikasi')->count();
-        $totalAktivitasRevisi       = $aktivitas->where('status_verifikasi', 'perlu_revisi')->count();
+        $aktivitasDedup = $aktivitas
+            ->sortByDesc('id')
+            ->unique(fn ($a) => ($a->jadwal_id ?? '0') . '|' . ($a->tanggal?->toDateString() ?? (string) $a->id))
+            ->values();
 
+        $aktivitasTerlapor          = $aktivitasDedup->where('status_konfirmasi', '!=', 'belum_dikonfirmasi');
+        $totalCatatanAktivitas      = $aktivitasTerlapor->count();
+        $totalAktivitasDikonfirmasi = $aktivitasTerlapor->where('status_konfirmasi', 'dikonfirmasi')->count();
+        $totalAktivitasDiverifikasi = $aktivitasTerlapor->where('status_verifikasi', 'diverifikasi')->count();
+        $totalAktivitasRevisi       = $aktivitasTerlapor->where('status_verifikasi', 'perlu_revisi')->count();
+
+        $elapsedOccurrences    = $this->occurrenceService->expandElapsedOccurrences($jadwals, $dari, $sampai);
         $missingAktivitasCount = $this->occurrenceService
-            ->getMissingActivityOccurrences($jadwals, $aktivitas, $dari, $sampai)
+            ->getMissingActivityOccurrences($jadwals, $aktivitasTerlapor, $dari, $sampai)
             ->count();
 
         $basisSesiAktivitas = max(
-            $jadwalKonkret->where('status', '!=', 'dibatalkan')->count(),
+            $elapsedOccurrences->count(),
             $totalCatatanAktivitas + $missingAktivitasCount
         );
         $persentaseAktivitas = $basisSesiAktivitas > 0
-            ? round(($totalAktivitasDikonfirmasi / $basisSesiAktivitas) * 100, 2)
+            ? min(100.0, round(($totalAktivitasDikonfirmasi / $basisSesiAktivitas) * 100, 2))
             : null;
         $skorAktivitas = $persentaseAktivitas;
 

@@ -272,7 +272,11 @@ class KehadiranController extends Controller
             'status.required'        => 'Status kehadiran wajib dipilih.',
         ]);
 
-        if (!empty($validated['jam_checkin']) && !empty($validated['jam_checkout']) && $validated['jam_checkout'] < $validated['jam_checkin']) {
+        $isNonHadir       = in_array($validated['status'], ['izin', 'tidak_hadir'], true);
+        $jamCheckinClean  = $isNonHadir ? null : ($validated['jam_checkin'] ?? null);
+        $jamCheckoutClean = $isNonHadir ? null : ($validated['jam_checkout'] ?? null);
+
+        if (!empty($jamCheckinClean) && !empty($jamCheckoutClean) && $jamCheckoutClean < $jamCheckinClean) {
             return back()
                 ->withInput()
                 ->withErrors(['jam_checkout' => 'Jam check-out harus sama dengan atau setelah jam check-in.']);
@@ -287,14 +291,14 @@ class KehadiranController extends Controller
         $jamMulaiJadwal = $jadwal ? substr((string) $jadwal->jam_mulai, 0, 5) : null;
         $menitTerlambat = 0;
 
-        if ($jamMulaiJadwal && !empty($validated['jam_checkin']) && in_array($validated['status'], ['hadir', 'terlambat'], true)) {
-            $kalkulasi = Absensi::hitungKeterlambatan($jamMulaiJadwal, $validated['jam_checkin']);
+        if ($jamMulaiJadwal && !empty($jamCheckinClean) && in_array($validated['status'], ['hadir', 'terlambat'], true)) {
+            $kalkulasi = Absensi::hitungKeterlambatan($jamMulaiJadwal, $jamCheckinClean);
             $menitTerlambat = $kalkulasi['menit_terlambat'];
         }
 
         $isCorrection = false;
 
-        DB::transaction(function () use ($validated, $jamMulaiJadwal, $menitTerlambat, &$isCorrection) {
+        DB::transaction(function () use ($validated, $jamMulaiJadwal, $jamCheckinClean, $jamCheckoutClean, $isNonHadir, $menitTerlambat, &$isCorrection) {
             $byId = !empty($validated['absensi_id']) ? Absensi::find((int) $validated['absensi_id']) : null;
 
             $existing = $byId ?: Absensi::where('instruktur_id', $validated['instruktur_id'])
@@ -314,14 +318,19 @@ class KehadiranController extends Controller
                 'jadwal_id'        => !empty($validated['jadwal_id']) ? (int) $validated['jadwal_id'] : null,
                 'tanggal'          => $validated['tanggal'],
                 'jam_mulai_jadwal' => $jamMulaiJadwal,
-                'jam_checkin'      => $validated['jam_checkin'] ?? null,
-                'jam_checkout'     => $validated['jam_checkout'] ?? null,
+                'jam_checkin'      => $jamCheckinClean,
+                'jam_checkout'     => $jamCheckoutClean,
                 'menit_terlambat'  => $menitTerlambat,
                 'status'           => $validated['status'],
                 'sumber'           => $byId ? ($byId->sumber ?: 'manual') : 'manual',
                 'status_gps'       => $byId ? ($byId->status_gps ?: 'tidak_tersedia') : 'tidak_tersedia',
                 'keterangan'       => $validated['keterangan'] ?: ($byId ? ($byId->keterangan ?: "Koreksi kehadiran oleh {$aktorNama}") : "Input absensi manual oleh {$aktorNama}"),
             ];
+
+            if ($isNonHadir) {
+                $payload['checkin_at']  = null;
+                $payload['checkout_at'] = null;
+            }
 
             if ($existing) {
                 $existing->update($payload);
@@ -417,7 +426,17 @@ class KehadiranController extends Controller
             if ($aktivitas) {
                 $aktivitas->update($payload);
             } else {
-                AktivitasMengajar::create($payload);
+                $aktivitas = AktivitasMengajar::create($payload);
+            }
+
+            AktivitasMengajar::where('instruktur_id', $jadwal->instruktur_id)
+                ->where('jadwal_id', $jadwal->id)
+                ->whereDate('tanggal', $validated['tanggal'])
+                ->where('id', '!=', $aktivitas->id)
+                ->delete();
+
+            if (! $jadwal->is_pola_mingguan && $jadwal->status !== 'dibatalkan' && $validated['status_konfirmasi'] === 'dikonfirmasi') {
+                $jadwal->update(['status' => 'selesai']);
             }
         });
 
@@ -432,6 +451,10 @@ class KehadiranController extends Controller
             'status_verifikasi'  => ['required', 'in:menunggu,diverifikasi,perlu_revisi'],
             'catatan_supervisor' => ['nullable', 'string', 'max:1000'],
         ]);
+
+        if ($aktivitas->status_konfirmasi === 'belum_dikonfirmasi' && $validated['status_verifikasi'] === 'diverifikasi') {
+            return back()->with('error', 'Jurnal aktivitas yang belum diisi atau dikonfirmasi oleh instruktur tidak dapat diverifikasi.');
+        }
 
         DB::transaction(function () use ($aktivitas, $validated) {
             $aktivitas->update([

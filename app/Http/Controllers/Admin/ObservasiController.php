@@ -243,6 +243,10 @@ class ObservasiController extends Controller
             'status_verifikasi.in'       => 'Status verifikasi harus menunggu, diverifikasi, atau perlu_revisi.',
         ]);
 
+        if ($aktivitas->status_konfirmasi === 'belum_dikonfirmasi' && $validated['status_verifikasi'] === 'diverifikasi') {
+            return back()->with('error', 'Jurnal aktivitas yang belum diisi atau dikonfirmasi oleh instruktur tidak dapat diverifikasi.');
+        }
+
         DB::transaction(function () use ($aktivitas, $validated) {
             $aktivitas->update([
                 'status_verifikasi'  => $validated['status_verifikasi'],
