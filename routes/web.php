@@ -273,3 +273,8 @@ Route::prefix('instruktur-panel')
             Route::post('/kembalikan',   [InstrukturNotifikasiController::class, 'restore'])->name('kembalikan');
         });
     });
+
+// Fallback untuk seluruh URL yang tidak terdaftar -> tampilkan halaman 404 custom LPK CTI
+Route::fallback(function () {
+    return response()->view('errors.404', [], 404);
+});

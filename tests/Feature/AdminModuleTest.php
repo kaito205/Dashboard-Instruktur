@@ -276,4 +276,42 @@ class AdminModuleTest extends TestCase
             ->get(route('instruktur.dashboard'))
             ->assertRedirect(route('login'));
     }
+
+    public function test_custom_error_pages_render_for_unknown_urls_missing_ids_and_forbidden_roles(): void
+    {
+        // 1. URL acak (guest) -> 404 custom LPK CTI dengan tombol Masuk ke Akun
+        $guest404 = $this->get('/halaman-ngawur-123');
+        $guest404->assertStatus(404)
+            ->assertSee('Halaman Tidak Ditemukan')
+            ->assertSee('LPK Cipta Tungga Indonesia Ciamis')
+            ->assertSee('Masuk ke Akun');
+
+        // 2. URL acak & ID data tidak ditemukan (authenticated admin) -> 404 custom dengan tombol Kembali ke Dashboard
+        $admin404 = $this->actingAs($this->admin)->get('/admin/instruktur/99999');
+        $admin404->assertStatus(404)
+            ->assertSee('Halaman Tidak Ditemukan')
+            ->assertSee('Kembali ke Dashboard')
+            ->assertSee(route('admin.dashboard'));
+
+        // 3. Akses silang role (instruktur mencoba masuk ke /admin/dashboard) -> 403 custom LPK CTI
+        $userIns = User::create([
+            'name'      => 'Instruktur Error Test',
+            'email'     => 'inserr@lpkcti.id',
+            'password'  => 'Instruktur@123',
+            'role'      => 'instruktur',
+            'is_active' => true,
+        ]);
+        $userIns->syncInstrukturProfile();
+
+        $ins403 = $this->actingAs($userIns)->get('/admin/dashboard');
+        $ins403->assertStatus(403)
+            ->assertSee('Akses Dibatasi')
+            ->assertSee('Kembali ke Dashboard')
+            ->assertDontSee('Portal Evaluasi Peserta')
+            ->assertSee(route('instruktur.dashboard'));
+
+        // 4. Instruktur yang sedang login dilarang membuka atau mengirim form evaluasi peserta (/evaluasi) agar tidak mengevaluasi diri sendiri
+        $this->actingAs($userIns)->get('/evaluasi')->assertStatus(403);
+        $this->actingAs($userIns)->post('/evaluasi', ['kode' => 'RPL'])->assertStatus(403);
+    }
 }

@@ -14,6 +14,10 @@ class EvaluasiPublikController extends Controller
 {
     public function index(Request $request)
     {
+        if (auth()->check() && auth()->user()->hasRole('instruktur')) {
+            abort(403, 'Halaman evaluasi ini khusus untuk peserta pelatihan. Instruktur tidak dapat mengisi evaluasi.');
+        }
+
         $inputKode    = strtoupper(trim((string) $request->get('kode', '')));
         $kodeEvaluasi = null;
         $sesiList     = collect();
@@ -55,6 +59,10 @@ class EvaluasiPublikController extends Controller
 
     public function store(Request $request)
     {
+        if (auth()->check() && auth()->user()->hasRole('instruktur')) {
+            abort(403, 'Instruktur tidak diizinkan mengirimkan formulir evaluasi peserta.');
+        }
+
         $validated = $request->validate([
             'kode'          => ['required', 'string', 'max:50'],
             'jadwal_id'     => ['nullable', 'integer', 'exists:jadwals,id'],
