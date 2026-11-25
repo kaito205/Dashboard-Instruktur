@@ -1,6 +1,6 @@
 <aside id="sidebar-supervisor"
     aria-label="Navigasi Utama Supervisor"
-    class="fixed flex flex-col mt-0 top-0 px-5 left-0 bg-white dark:bg-gray-900 dark:border-gray-800 text-gray-900 h-screen transition-all duration-300 ease-in-out z-99999 border-r border-gray-200"
+    class="fixed top-0 left-0 z-99999 flex h-screen flex-col border-r border-slate-200 bg-white text-gray-900 transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-gray-900 dark:text-gray-100"
     x-data="{
         openMenus: {},
         init() { this.autoOpenActive(); },
@@ -32,22 +32,22 @@
             ? 'LPK CTI Ciamis'
             : ($appIdentity['lpk_name'] ?: 'LPK CTI Ciamis');
     @endphp
-    <div class="pt-7 pb-6 flex"
-        :class="(!$store.sidebar.isExpanded && !$store.sidebar.isHovered && !$store.sidebar.isMobileOpen) ? 'xl:justify-center' : 'justify-start'">
+    <div class="flex h-16 shrink-0 items-center border-b border-slate-200 px-5 dark:border-slate-800"
+        :class="(!$store.sidebar.isExpanded && !$store.sidebar.isHovered && !$store.sidebar.isMobileOpen) ? 'xl:justify-center xl:px-3' : 'justify-start'">
         <a href="{{ route('supervisor.dashboard') }}"
             class="flex min-w-0 items-center gap-3 rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
             <img src="{{ asset('images/logo/logocti.png') }}"
                 alt="Logo {{ $appIdentity['lpk_name'] }}"
-                class="h-10 w-auto rounded-lg object-contain shrink-0" />
+                class="h-9 w-auto shrink-0 rounded-lg object-contain" />
             <span x-show="$store.sidebar.isExpanded || $store.sidebar.isHovered || $store.sidebar.isMobileOpen"
-                class="min-w-0 text-sm font-bold text-gray-900 dark:text-white leading-tight">
-                <span class="block whitespace-nowrap" title="{{ $appIdentity['lpk_name'] }}">{{ $shortLpkName }}</span>
-                <span class="block text-xs font-medium text-brand-600 dark:text-brand-300">Panel Supervisor</span>
+                class="min-w-0 leading-tight">
+                <span class="block text-sm font-bold whitespace-nowrap text-gray-900 dark:text-white" title="{{ $appIdentity['lpk_name'] }}">{{ $shortLpkName }}</span>
+                <span class="block text-xs font-medium text-gray-600 dark:text-gray-300">Supervisor</span>
             </span>
         </a>
     </div>
 
-    <div class="flex flex-col overflow-y-auto duration-300 ease-linear no-scrollbar flex-1">
+    <div class="no-scrollbar flex flex-1 flex-col overflow-y-auto px-5 pt-4 duration-300 ease-linear">
         <nav class="mb-6 space-y-5">
 
             <div>

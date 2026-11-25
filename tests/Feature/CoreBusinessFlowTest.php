@@ -438,4 +438,81 @@ class CoreBusinessFlowTest extends TestCase
 
         Carbon::setTestNow();
     }
+
+    public function test_jadwal_specific_date_syncs_hari_and_hari_filter_excludes_mismatched_dates_in_calendar_and_table(): void
+    {
+        // Buat jadwal tanggal spesifik pada Kamis, 19 November 2026 tetapi form mengirim hari = 'Senin'
+        $this->actingAs($this->admin)->post(route('admin.jadwal.store'), [
+            'instruktur_id'    => $this->instruktur->id,
+            'nama_kelas'       => 'TES TEKNIK KAMIS',
+            'materi'           => 'Jaringan Dasar',
+            'is_pola_mingguan' => '0',
+            'hari'             => 'Senin',
+            'tanggal'          => '2026-11-19',
+            'jam_mulai'        => '08:00',
+            'jam_selesai'      => '10:00',
+            'ruangan'          => 'L-01',
+            'status'           => 'terjadwal',
+        ])->assertRedirect(route('admin.jadwal.index'));
+
+        $jadwalKamis = Jadwal::where('nama_kelas', 'TES TEKNIK KAMIS')->firstOrFail();
+        $this->assertFalse($jadwalKamis->is_pola_mingguan);
+        $this->assertEquals('Kamis', $jadwalKamis->hari);
+
+        // Buat jadwal pola mingguan hari Senin
+        $jadwalSenin = Jadwal::create([
+            'instruktur_id'    => $this->instruktur->id,
+            'nama_kelas'       => 'RPL SENIN REGULER',
+            'materi'           => 'Algoritma',
+            'is_pola_mingguan' => true,
+            'hari'             => 'Senin',
+            'jam_mulai'        => '13:00',
+            'jam_selesai'      => '15:00',
+            'ruangan'          => 'R-01',
+            'status'           => 'terjadwal',
+        ]);
+
+        // Filter hari=Senin di Kalender Admin: hanya jadwal Senin yang muncul di kalender, jadwal Kamis tidak boleh muncul di kalender
+        $resAdminCal = $this->actingAs($this->admin)->get(route('admin.jadwal.index', [
+            'tampilan'         => 'kalender',
+            'skala_kalender'   => 'bulanan',
+            'tanggal_kalender' => '2026-11-19',
+            'hari'             => 'Senin',
+        ]));
+        $resAdminCal->assertOk()
+            ->assertViewHas('calendarEvents', function ($events): bool {
+                $flat = collect($events)->flatten(1);
+                return $flat->contains(fn ($j) => $j->nama_kelas === 'RPL SENIN REGULER')
+                    && ! $flat->contains(fn ($j) => $j->nama_kelas === 'TES TEKNIK KAMIS');
+            })
+            ->assertSee('Filter Hari:');
+
+        // Filter hari=Kamis di Tabel Supervisor: hanya jadwal Kamis yang muncul di tabel
+        $resSupTable = $this->actingAs($this->supervisor)->get(route('supervisor.jadwal.index', [
+            'tampilan' => 'tabel',
+            'dari'     => '2026-11-01',
+            'sampai'   => '2026-11-30',
+            'hari'     => 'Kamis',
+        ]));
+        $resSupTable->assertOk()
+            ->assertViewHas('jadwals', function ($jadwals): bool {
+                $items = collect($jadwals->items());
+                return $items->contains(fn ($j) => $j->nama_kelas === 'TES TEKNIK KAMIS')
+                    && ! $items->contains(fn ($j) => $j->nama_kelas === 'RPL SENIN REGULER');
+            });
+
+        // Filter hari=Senin di Kalender Instruktur: jadwal Kamis tidak muncul di kalender
+        $resInsCal = $this->actingAs($this->instrukturUser)->get(route('instruktur.jadwal.index', [
+            'tampilan'         => 'kalender',
+            'skala_kalender'   => 'bulanan',
+            'tanggal_kalender' => '2026-11-19',
+            'hari'             => 'Senin',
+        ]));
+        $resInsCal->assertOk()
+            ->assertViewHas('calendarEvents', function ($events): bool {
+                $flat = collect($events)->flatten(1);
+                return $flat->contains(fn ($j) => $j->nama_kelas === 'RPL SENIN REGULER')
+                    && ! $flat->contains(fn ($j) => $j->nama_kelas === 'TES TEKNIK KAMIS');
+            });
+    }
 }

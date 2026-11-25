@@ -21,7 +21,7 @@ class StoreJadwalRequest extends FormRequest
         $tanggal = $this->input('tanggal');
         $hari = $this->input('hari');
 
-        if (!$isPola && $tanggal && !$hari) {
+        if (!$isPola && $tanggal) {
             try {
                 $hari = Jadwal::hariDariTanggal($tanggal);
             } catch (\Throwable) {

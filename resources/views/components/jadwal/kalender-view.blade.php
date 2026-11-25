@@ -82,13 +82,31 @@
     }
 
     $defaultSelectedDay = $anchor->toDateString();
+    $activeHariFilter = trim((string) request()->input('hari', ''));
     $hasActiveFilter = request()->filled('search') || request()->filled('instruktur') || request()->filled('hari') || request()->filled('status');
+    $resetHariUrl = route(
+        $routePrefix . '.index',
+        array_merge(
+            collect($baseFilterQuery)->except(['hari'])->toArray(),
+            ['tampilan' => 'kalender', 'skala_kalender' => $skala, 'tanggal_kalender' => $anchor->toDateString()]
+        )
+    );
     if ($skala !== 'harian' && $eventsByDate->get($defaultSelectedDay, collect())->isEmpty() && (!request()->filled('tanggal_kalender') || $hasActiveFilter)) {
+        $foundWithEvents = false;
         foreach ($datesInRange as $candidateDate) {
             $candidateKey = $candidateDate->toDateString();
             if ($eventsByDate->get($candidateKey, collect())->isNotEmpty()) {
                 $defaultSelectedDay = $candidateKey;
+                $foundWithEvents = true;
                 break;
+            }
+        }
+        if (!$foundWithEvents && $activeHariFilter !== '') {
+            foreach ($datesInRange as $candidateDate) {
+                if (\App\Models\Jadwal::hariDariTanggal($candidateDate) === $activeHariFilter) {
+                    $defaultSelectedDay = $candidateDate->toDateString();
+                    break;
+                }
             }
         }
     }
@@ -429,14 +447,24 @@
                             </div>
                         @else
                             <div class="rounded-lg border border-dashed border-gray-300 bg-white p-5 text-center dark:border-gray-700 dark:bg-gray-900">
-                                <p class="text-xs font-medium text-gray-700 dark:text-gray-300">
-                                    Tidak ada jadwal mengajar pada {{ $detailLabel }}.
-                                </p>
-                                @if($canManage)
-                                <a href="{{ route($routePrefix . '.create') }}"
-                                   class="mt-3 inline-flex min-h-[44px] items-center rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-xs font-semibold text-gray-800 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
-                                    Tambah Jadwal
-                                </a>
+                                @if($activeHariFilter !== '' && $detailHari !== $activeHariFilter)
+                                    <p class="text-xs font-medium leading-relaxed text-gray-700 dark:text-gray-300">
+                                        Filter Hari: <span class="font-semibold text-gray-900 dark:text-white">{{ $activeHariFilter }}</span> sedang aktif. Ubah filter ke Semua Hari atau pilih tanggal di hari {{ $activeHariFilter }} untuk melihat jadwal.
+                                    </p>
+                                    <a href="{{ $resetHariUrl }}"
+                                       class="mt-3 inline-flex min-h-[38px] items-center rounded-lg border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                                        Reset Filter Hari
+                                    </a>
+                                @else
+                                    <p class="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                        Tidak ada jadwal mengajar pada {{ $detailLabel }}.
+                                    </p>
+                                    @if($canManage)
+                                    <a href="{{ route($routePrefix . '.create') }}"
+                                       class="mt-3 inline-flex min-h-[44px] items-center rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-xs font-semibold text-gray-800 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                                        Tambah Jadwal
+                                    </a>
+                                    @endif
                                 @endif
                             </div>
                         @endif

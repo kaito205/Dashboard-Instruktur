@@ -1,6 +1,6 @@
 <aside id="sidebar-admin"
     aria-label="Navigasi Utama Admin"
-    class="fixed top-0 left-0 z-99999 flex h-screen flex-col border-r border-gray-200 bg-white px-3.5 text-gray-900 transition-all duration-300 ease-in-out dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+    class="fixed top-0 left-0 z-99999 flex h-screen flex-col border-r border-slate-200 bg-white text-gray-900 transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-gray-900 dark:text-gray-100"
     x-data="{
         openMenus: {},
         init() { this.autoOpenActive(); },
@@ -36,10 +36,10 @@
             ? 'LPK CTI Ciamis'
             : ($appIdentity['lpk_name'] ?: 'LPK CTI Ciamis');
     @endphp
-    <div class="mb-3 flex border-b border-gray-200 py-4 dark:border-gray-800"
-        :class="(!$store.sidebar.isExpanded && !$store.sidebar.isHovered && !$store.sidebar.isMobileOpen) ? 'xl:justify-center' : 'justify-start'">
+    <div class="flex h-16 shrink-0 items-center border-b border-slate-200 px-3.5 dark:border-slate-800"
+        :class="(!$store.sidebar.isExpanded && !$store.sidebar.isHovered && !$store.sidebar.isMobileOpen) ? 'xl:justify-center xl:px-2' : 'justify-start'">
         <a href="{{ route('admin.dashboard') }}"
-            class="flex min-w-0 items-center gap-2.5 rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+            class="flex min-w-0 items-center gap-3 rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
             <img src="{{ asset('images/logo/logocti.png') }}"
                 alt="Logo {{ $appIdentity['lpk_name'] }}"
                 class="h-9 w-auto shrink-0 rounded-lg object-contain" />
@@ -51,7 +51,7 @@
         </a>
     </div>
 
-    <div class="no-scrollbar flex flex-1 flex-col overflow-y-auto duration-300 ease-linear">
+    <div class="no-scrollbar flex flex-1 flex-col overflow-y-auto px-3.5 pt-4 duration-300 ease-linear">
         <nav class="mb-6 space-y-5">
 
             <div>

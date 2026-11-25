@@ -316,7 +316,7 @@ class ImportExportAndReadinessTest extends TestCase
     {
         $overdueDate = today()->subDays(5);
 
-        Jadwal::create([
+        $overdueJadwal = Jadwal::create([
             'instruktur_id'    => $this->instruktur->id,
             'kode_kelas'       => 'JRK-01',
             'nama_kelas'       => 'Jaringan Lanjut',
@@ -326,6 +326,19 @@ class ImportExportAndReadinessTest extends TestCase
             'jam_selesai'      => '10:00',
             'is_pola_mingguan' => false,
             'status'           => 'terjadwal',
+        ]);
+
+        // Tambah evaluasi peserta bernilai tinggi agar skor gabungan Budi berada di atas batas Cukup (60)
+        // sehingga fokus pengujian hanya pada 1 peringatan Jurnal dan 1 pengingat Jadwal besok.
+        Evaluasi::create([
+            'instruktur_id' => $this->instruktur->id,
+            'jadwal_id'     => $overdueJadwal->id,
+            'nama_pengisi'  => 'Peserta Evaluasi',
+            'total_nilai'   => 100.0,
+            'jawaban'       => [
+                'skor_indikator'    => ['indikator_1' => 5],
+                'rata_rata_skala_5' => 5.0,
+            ],
         ]);
 
         // Tambah jadwal untuk besok (H-1) sebagai pengingat info
@@ -341,6 +354,7 @@ class ImportExportAndReadinessTest extends TestCase
             'status'           => 'terjadwal',
         ]);
 
+        KinerjaCalculationService::clearMemo();
         \App\Services\OperationalAlertService::clearMemo();
 
         $dari   = $overdueDate->copy()->startOfMonth()->toDateString();

@@ -1,5 +1,5 @@
 <header id="header-admin"
-    class="sticky top-0 z-99999 flex w-full border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"
+    class="sticky top-0 z-99999 flex w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-gray-900"
     x-data="{
         isApplicationMenuOpen: false,
         userOpen: false,
@@ -10,9 +10,9 @@
     @keydown.escape.window="userOpen = false; isApplicationMenuOpen = false"
     @keydown.window.meta.k.prevent="$refs.adminSearchInput?.focus()"
     @keydown.window.ctrl.k.prevent="$refs.adminSearchInput?.focus()">
-    <div class="flex grow flex-col items-center justify-between gap-3 xl:flex-row xl:px-6">
+    <div class="flex grow flex-col items-center justify-between gap-3 xl:h-16 xl:flex-row xl:px-6">
         <div
-            class="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-2.5 sm:gap-4 xl:w-auto xl:justify-normal xl:border-b-0 xl:px-0 dark:border-gray-800">
+            class="flex h-16 w-full items-center justify-between gap-2 border-b border-slate-200 px-3 sm:gap-4 xl:h-full xl:w-auto xl:justify-normal xl:border-b-0 xl:px-0 dark:border-slate-800">
 
             <button type="button"
                 class="hidden h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 xl:flex dark:border-gray-800 dark:text-gray-300 dark:hover:bg-gray-800"
@@ -62,7 +62,7 @@
         </div>
 
         <div :class="isApplicationMenuOpen ? 'flex' : 'hidden'"
-            class="w-full items-center justify-between gap-3 px-4 py-2.5 xl:flex xl:w-auto xl:shrink-0 xl:justify-end xl:px-0">
+            class="w-full items-center justify-between gap-3 px-4 py-2.5 xl:flex xl:h-full xl:w-auto xl:shrink-0 xl:justify-end xl:px-0 xl:py-0">
             <div class="flex items-center gap-2">
                 <button type="button"
                     aria-label="Ganti mode tampilan terang atau gelap"

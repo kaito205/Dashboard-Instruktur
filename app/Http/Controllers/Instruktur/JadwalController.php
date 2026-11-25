@@ -80,7 +80,10 @@ class JadwalController extends Controller
 
         $jadwals = $allInstrukturJadwals
             ->filter(function (Jadwal $j) use ($search, $hariFilter): bool {
-                if ($hariFilter !== '' && $j->hari !== $hariFilter) {
+                $hariAktual = (! $j->is_pola_mingguan && $j->tanggal)
+                    ? Jadwal::hariDariTanggal($j->tanggal)
+                    : $j->hari;
+                if ($hariFilter !== '' && $hariAktual !== $hariFilter) {
                     return false;
                 }
                 if ($search !== '') {
@@ -90,7 +93,7 @@ class JadwalController extends Controller
                         $j->kode_kelas,
                         $j->materi,
                         $j->ruangan,
-                        $j->hari,
+                        $hariAktual,
                     ])));
                     if (! str_contains($haystack, $needle)) {
                         return false;
@@ -100,10 +103,12 @@ class JadwalController extends Controller
             })
             ->values();
 
-        $jadwalPadaTanggal = $jadwals
-            ->filter(fn (Jadwal $j): bool => $j->berlakuPadaTanggal($tanggalSesi))
-            ->sortBy('jam_mulai')
-            ->values();
+        $jadwalPadaTanggal = ($hariFilter !== '' && $hariTanggal !== $hariFilter)
+            ? collect()
+            : $jadwals
+                ->filter(fn (Jadwal $j): bool => $j->berlakuPadaTanggal($tanggalSesi))
+                ->sortBy('jam_mulai')
+                ->values();
 
         $jadwalPolaMingguan = $jadwals
             ->where('is_pola_mingguan', true)
@@ -139,6 +144,9 @@ class JadwalController extends Controller
             foreach ($jadwals->where('is_pola_mingguan', false) as $ev) {
                 if ($ev->tanggal) {
                     $evDate = $ev->tanggal->copy()->startOfDay();
+                    if ($hariFilter !== '' && Jadwal::hariDariTanggal($evDate) !== $hariFilter) {
+                        continue;
+                    }
                     if ($evDate->gte($calRangeStart) && $evDate->lte($calRangeEnd)) {
                         $calendarMap[$ev->tanggal->toDateString()][] = $ev;
                     }
@@ -151,6 +159,10 @@ class JadwalController extends Controller
                 while ($cursor->lte($calRangeEnd)) {
                     $dateKey    = $cursor->toDateString();
                     $hariCursor = Jadwal::hariDariTanggal($cursor);
+                    if ($hariFilter !== '' && $hariCursor !== $hariFilter) {
+                        $cursor->addDay();
+                        continue;
+                    }
                     foreach ($polaEvents->where('hari', $hariCursor) as $pola) {
                         if ($pola->periode_mulai && $cursor->lt($pola->periode_mulai)) {
                             continue;

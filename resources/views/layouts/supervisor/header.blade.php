@@ -1,5 +1,5 @@
 <header id="header-supervisor"
-    class="sticky top-0 flex w-full bg-white border-gray-200 z-99999 dark:border-gray-800 dark:bg-gray-900 xl:border-b"
+    class="sticky top-0 z-99999 flex w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-gray-900"
     x-data="{
         isApplicationMenuOpen: false,
         userOpen: false,
@@ -10,9 +10,9 @@
     @keydown.escape.window="userOpen = false; isApplicationMenuOpen = false"
     @keydown.window.meta.k.prevent="$refs.supervisorSearchInput?.focus()"
     @keydown.window.ctrl.k.prevent="$refs.supervisorSearchInput?.focus()">
-    <div class="flex flex-col items-center justify-between gap-3 grow xl:flex-row xl:px-6">
+    <div class="flex grow flex-col items-center justify-between gap-3 xl:h-16 xl:flex-row xl:px-6">
         <div
-            class="flex items-center justify-between w-full gap-2 px-3 py-3 border-b border-gray-200 dark:border-gray-800 sm:gap-4 xl:w-auto xl:justify-normal xl:border-b-0 xl:px-0 lg:py-4">
+            class="flex h-16 w-full items-center justify-between gap-2 border-b border-slate-200 px-3 sm:gap-4 xl:h-full xl:w-auto xl:justify-normal xl:border-b-0 xl:px-0 dark:border-slate-800">
 
             <!-- Desktop Sidebar Toggle Button (visible on xl and up) -->
             <button type="button"
@@ -78,7 +78,7 @@
 
         <!-- Application Menu (mobile) and Right Side Actions (desktop) -->
         <div :class="isApplicationMenuOpen ? 'flex' : 'hidden'"
-            class="items-center justify-between w-full gap-4 px-5 py-4 xl:flex xl:w-auto xl:shrink-0 shadow-theme-md xl:justify-end xl:px-0 xl:shadow-none">
+            class="w-full items-center justify-between gap-4 px-5 py-2.5 shadow-theme-md xl:flex xl:h-full xl:w-auto xl:shrink-0 xl:justify-end xl:px-0 xl:py-0 xl:shadow-none">
             <div class="flex items-center gap-2 2xsm:gap-3">
                 <!-- Theme Toggle Button -->
                 <button type="button"

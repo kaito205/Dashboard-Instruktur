@@ -257,19 +257,34 @@
                         @empty
                             <tr>
                                 <td colspan="5" class="px-5 py-8 text-center">
-                                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200">
-                                        Tidak ada jadwal mengajar pada {{ $hariTanggal }}, {{ \Carbon\Carbon::parse($tanggalSesi)->format('d/m/Y') }}.
-                                    </p>
-                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                        Check-in tidak tersedia karena tidak ada kelas yang dijadwalkan pada tanggal ini.
-                                    </p>
-                                    @if ($jadwalBerikutnya)
+                                    @if ($hariFilter !== '' && $hariTanggal !== $hariFilter)
+                                        <p class="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                            Filter Hari: <span class="font-semibold text-gray-900 dark:text-white">{{ $hariFilter }}</span> sedang aktif (tanggal terpilih adalah {{ $hariTanggal }}, {{ \Carbon\Carbon::parse($tanggalSesi)->format('d/m/Y') }}).
+                                        </p>
+                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                            Ubah filter ke Semua Hari atau pilih tanggal di hari {{ $hariFilter }} untuk melihat jadwal mengajar.
+                                        </p>
                                         <div class="mt-4">
-                                            <a href="{{ route('instruktur.jadwal.index', ['tanggal_sesi' => $jadwalBerikutnya['tanggal_sesi']]) }}"
-                                                class="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
-                                                Lihat Jadwal Berikutnya: {{ $jadwalBerikutnya['hari'] }}, {{ $jadwalBerikutnya['tanggal']->format('d/m/Y') }} ({{ $jadwalBerikutnya['jadwal']->nama_kelas }})
+                                            <a href="{{ route('instruktur.jadwal.index', array_filter(['tanggal_sesi' => $tanggalSesi, 'search' => $search])) }}"
+                                                class="inline-flex min-h-[40px] items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                                                Reset Filter Hari
                                             </a>
                                         </div>
+                                    @else
+                                        <p class="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                            Tidak ada jadwal mengajar pada {{ $hariTanggal }}, {{ \Carbon\Carbon::parse($tanggalSesi)->format('d/m/Y') }}.
+                                        </p>
+                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                            Check-in tidak tersedia karena tidak ada kelas yang dijadwalkan pada tanggal ini.
+                                        </p>
+                                        @if ($jadwalBerikutnya)
+                                            <div class="mt-4">
+                                                <a href="{{ route('instruktur.jadwal.index', ['tanggal_sesi' => $jadwalBerikutnya['tanggal_sesi']]) }}"
+                                                    class="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                                                    Lihat Jadwal Berikutnya: {{ $jadwalBerikutnya['hari'] }}, {{ $jadwalBerikutnya['tanggal']->format('d/m/Y') }} ({{ $jadwalBerikutnya['jadwal']->nama_kelas }})
+                                                </a>
+                                            </div>
+                                        @endif
                                     @endif
                                 </td>
                             </tr>

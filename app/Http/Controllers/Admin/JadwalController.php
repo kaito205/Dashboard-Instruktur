@@ -116,7 +116,7 @@ class JadwalController extends Controller
             ->when($instrukturId !== '', fn ($q) => $q->where('instruktur_id', $instrukturId))
             ->when($selectedKelas, fn ($q) => $selectedKelas->scopeMatchingJadwal($q))
             ->when($status !== '', fn ($q) => $q->where('status', $status))
-            ->when($hariFilter !== '', fn ($q) => $q->where('hari', $hariFilter));
+            ->when($hariFilter !== '', fn ($q) => $q->filterHari($hariFilter));
 
         $jadwals = $filteredQuery->clone()
             ->periode($dari, $sampai)
@@ -136,6 +136,9 @@ class JadwalController extends Controller
         foreach ($allEvents->where('is_pola_mingguan', false) as $ev) {
             if ($ev->tanggal) {
                 $evDate = $ev->tanggal->copy()->startOfDay();
+                if ($hariFilter !== '' && Jadwal::hariDariTanggal($evDate) !== $hariFilter) {
+                    continue;
+                }
                 if ($evDate->gte($calRangeStart) && $evDate->lte($calRangeEnd)) {
                     $calendarMap[$ev->tanggal->toDateString()][] = $ev;
                 }
@@ -148,6 +151,10 @@ class JadwalController extends Controller
             while ($cursor->lte($calRangeEnd)) {
                 $dateKey = $cursor->toDateString();
                 $hariCursor = Jadwal::hariDariTanggal($cursor);
+                if ($hariFilter !== '' && $hariCursor !== $hariFilter) {
+                    $cursor->addDay();
+                    continue;
+                }
                 foreach ($polaEvents->where('hari', $hariCursor) as $pola) {
                     if ($pola->periode_mulai && $cursor->lt($pola->periode_mulai)) {
                         continue;
@@ -337,6 +344,8 @@ class JadwalController extends Controller
             $validated = $request->validated();
             if ($isPolaMingguan) {
                 $validated['tanggal'] = null;
+            } elseif (! empty($validated['tanggal'])) {
+                $validated['hari'] = Jadwal::hariDariTanggal($validated['tanggal']);
             }
             $validated['ruangan'] = $ruanganNorm !== '' ? $ruanganNorm : null;
             $validated = $this->resolveKelasData($validated);
@@ -397,6 +406,8 @@ class JadwalController extends Controller
             $validated = $request->validated();
             if ($isPolaMingguan) {
                 $validated['tanggal'] = null;
+            } elseif (! empty($validated['tanggal'])) {
+                $validated['hari'] = Jadwal::hariDariTanggal($validated['tanggal']);
             }
             $validated['ruangan'] = $ruanganNorm !== '' ? $ruanganNorm : null;
             $validated = $this->resolveKelasData($validated);

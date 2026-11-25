@@ -65,6 +65,18 @@ class Jadwal extends Model
         ];
     }
 
+    protected static function booted(): void
+    {
+        static::saving(function (self $jadwal): void {
+            if ($jadwal->is_pola_mingguan) {
+                $jadwal->tanggal = null;
+            } elseif ($jadwal->tanggal !== null) {
+                $jadwal->is_pola_mingguan = false;
+                $jadwal->hari = self::hariDariTanggal($jadwal->tanggal);
+            }
+        });
+    }
+
     public static function hariDariTanggal($tanggal): string
     {
         $dt = $tanggal instanceof Carbon ? $tanggal : Carbon::parse($tanggal);
@@ -126,6 +138,51 @@ class Jadwal extends Model
         return null;
     }
 
+    public function scopeFilterHari($query, string $hari)
+    {
+        if (! in_array($hari, self::HARI_LIST, true)) {
+            return $query;
+        }
+
+        $mysqlWeekdayMap = [
+            'Senin'  => 0,
+            'Selasa' => 1,
+            'Rabu'   => 2,
+            'Kamis'  => 3,
+            'Jumat'  => 4,
+            'Sabtu'  => 5,
+            'Minggu' => 6,
+        ];
+        $sqliteStrftimeMap = [
+            'Minggu' => '0',
+            'Senin'  => '1',
+            'Selasa' => '2',
+            'Rabu'   => '3',
+            'Kamis'  => '4',
+            'Jumat'  => '5',
+            'Sabtu'  => '6',
+        ];
+
+        $driver = $query->getConnection()->getDriverName();
+
+        return $query->where(function ($q) use ($hari, $driver, $mysqlWeekdayMap, $sqliteStrftimeMap) {
+            $q->where(function ($sub) use ($hari) {
+                $sub->where('is_pola_mingguan', true)->where('hari', $hari);
+            })->orWhere(function ($sub) use ($hari, $driver, $mysqlWeekdayMap, $sqliteStrftimeMap) {
+                $sub->where(function ($p) {
+                    $p->where('is_pola_mingguan', false)->orWhereNull('is_pola_mingguan');
+                })->whereNotNull('tanggal');
+                if (in_array($driver, ['mysql', 'mariadb'], true) && isset($mysqlWeekdayMap[$hari])) {
+                    $sub->whereRaw('WEEKDAY(tanggal) = ?', [$mysqlWeekdayMap[$hari]]);
+                } elseif ($driver === 'sqlite' && isset($sqliteStrftimeMap[$hari])) {
+                    $sub->whereRaw("strftime('%w', tanggal) = ?", [$sqliteStrftimeMap[$hari]]);
+                } else {
+                    $sub->where('hari', $hari);
+                }
+            });
+        });
+    }
+
     public function scopeHariIni($query)
     {
         $hariIni = self::hariDariTanggal(today());
@@ -178,7 +235,8 @@ class Jadwal extends Model
         }
 
         if ($this->tanggal) {
-            return ($this->hari ? $this->hari . ', ' : '') . $this->tanggal->format('d/m/Y');
+            $hariAktual = self::hariDariTanggal($this->tanggal);
+            return $hariAktual . ', ' . $this->tanggal->format('d/m/Y');
         }
 
         return $this->hari ? 'Setiap ' . $this->hari : '-';
