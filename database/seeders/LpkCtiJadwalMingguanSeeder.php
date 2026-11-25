@@ -54,15 +54,14 @@ class LpkCtiJadwalMingguanSeeder extends Seeder
 
         $instrukturs = [];
         foreach ($instrukturData as $key => $row) {
-            $user = User::updateOrCreate(
-                ['email' => $row['email']],
-                [
-                    'name'      => $row['nama_lengkap'],
-                    'password'  => Hash::make('Instruktur@123'),
-                    'role'      => 'instruktur',
-                    'is_active' => true,
-                ]
-            );
+            $user = User::firstOrNew(['email' => $row['email']]);
+            $user->name      = $row['nama_lengkap'];
+            $user->role      = 'instruktur';
+            $user->is_active = true;
+            if (! $user->exists) {
+                $user->password = Hash::make((string) env('INSTRUKTUR_INITIAL_PASSWORD', 'Instruktur@123'));
+            }
+            $user->save();
 
             $instrukturs[$key] = Instruktur::updateOrCreate(
                 ['kode_instruktur' => $row['kode_instruktur']],

@@ -11,25 +11,23 @@ class AdminSeeder extends Seeder
 {
     public function run(): void
     {
-        User::updateOrCreate(
-            ['email' => 'admin@lpkcti.id'],
-            [
-                'name'      => 'Administrator',
-                'password'  => Hash::make('Admin@123'),
-                'role'      => 'admin',
-                'is_active' => true,
-            ]
-        );
+        $admin = User::firstOrNew(['email' => 'admin@lpkcti.id']);
+        $admin->name      = 'Administrator';
+        $admin->role      = 'admin';
+        $admin->is_active = true;
+        if (! $admin->exists) {
+            $admin->password = Hash::make((string) env('ADMIN_INITIAL_PASSWORD', 'Admin@123'));
+        }
+        $admin->save();
 
-        User::updateOrCreate(
-            ['email' => 'supervisor@lpkcti.id'],
-            [
-                'name'      => 'Supervisor LPK',
-                'password'  => Hash::make('Supervisor@123'),
-                'role'      => 'supervisor',
-                'is_active' => true,
-            ]
-        );
+        $supervisor = User::firstOrNew(['email' => 'supervisor@lpkcti.id']);
+        $supervisor->name      = 'Supervisor LPK';
+        $supervisor->role      = 'supervisor';
+        $supervisor->is_active = true;
+        if (! $supervisor->exists) {
+            $supervisor->password = Hash::make((string) env('SUPERVISOR_INITIAL_PASSWORD', 'Supervisor@123'));
+        }
+        $supervisor->save();
 
         $settings = [
             ['key' => 'app_name',                   'value' => 'Dashboard Instruktur LPK CTI', 'group' => 'general'],

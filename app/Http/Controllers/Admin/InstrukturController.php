@@ -84,7 +84,7 @@ class InstrukturController extends Controller
 
         $data         = $request->validated();
         $akunMode     = (string) ($data['akun_mode'] ?? 'auto');
-        $passwordAwal = (string) ($data['password_awal'] ?? 'Instruktur@123');
+        $passwordAwal = (string) ($data['password_awal'] ?? '');
         unset($data['akun_mode'], $data['password_awal']);
 
         $data['status_ketersediaan'] = $data['status_ketersediaan'] ?? 'tersedia';

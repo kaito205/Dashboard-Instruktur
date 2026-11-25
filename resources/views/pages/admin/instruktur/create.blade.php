@@ -151,7 +151,8 @@
                         <div class="flex gap-2">
                             <input id="password_awal" name="password_awal"
                                    :type="showPass ? 'text' : 'password'"
-                                   value="{{ old('password_awal', 'Instruktur@123') }}"
+                                   value="{{ old('password_awal', '') }}"
+                                   placeholder="Masukkan password awal instruktur"
                                    :required="akunMode === 'auto'"
                                    class="min-h-[44px] w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2 font-mono text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white">
                             <button type="button" @click="showPass = !showPass"
