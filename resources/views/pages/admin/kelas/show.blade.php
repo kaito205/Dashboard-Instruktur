@@ -18,7 +18,9 @@
         </a>
         <div class="mt-1 flex flex-wrap items-center gap-2">
             <h1 class="text-xl font-bold text-gray-900 dark:text-white">{{ $kelas->nama_kelas }}</h1>
-            <span class="inline-flex rounded-md bg-brand-50 px-2.5 py-0.5 font-mono text-xs font-bold text-brand-700 dark:bg-brand-950/60 dark:text-brand-300">{{ $kelas->kode_kelas }}</span>
+            @if(mb_strtolower(trim($kelas->kode_kelas)) !== mb_strtolower(trim($kelas->nama_kelas)))
+                <span class="inline-flex rounded-md bg-brand-50 px-2.5 py-0.5 font-mono text-xs font-bold text-brand-700 dark:bg-brand-950/60 dark:text-brand-300">{{ $kelas->kode_kelas }}</span>
+            @endif
             @if($kelas->trashed())
                 <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300">Diarsipkan</span>
             @else

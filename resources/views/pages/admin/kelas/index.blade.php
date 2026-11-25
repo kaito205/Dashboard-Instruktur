@@ -110,7 +110,9 @@
                 <tr class="hover:bg-gray-50/70 dark:hover:bg-gray-800/40 {{ $k->trashed() ? 'bg-gray-50/70 dark:bg-gray-800/20' : '' }}">
                     <td class="px-4 py-3">
                         <div class="flex items-center gap-2">
-                            <span class="inline-flex rounded-md bg-brand-50 px-2 py-0.5 font-mono text-xs font-bold text-brand-700 dark:bg-brand-950/60 dark:text-brand-300">{{ $k->kode_kelas }}</span>
+                            @if(mb_strtolower(trim($k->kode_kelas)) !== mb_strtolower(trim($k->nama_kelas)))
+                                <span class="inline-flex rounded-md bg-brand-50 px-2 py-0.5 font-mono text-xs font-bold text-brand-700 dark:bg-brand-950/60 dark:text-brand-300">{{ $k->kode_kelas }}</span>
+                            @endif
                             <a href="{{ route('admin.kelas.show', $k->id) }}" class="font-semibold text-gray-900 hover:text-brand-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-white dark:hover:text-brand-300">
                                 {{ $k->nama_kelas }}
                             </a>

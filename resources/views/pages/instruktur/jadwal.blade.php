@@ -152,7 +152,7 @@
                                 <td class="px-5 py-3.5">
                                     <div class="flex flex-wrap items-center gap-2">
                                         <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ $j->nama_kelas }}</p>
-                                        @if ($j->kode_kelas)
+                                        @if ($j->kode_kelas && mb_strtolower(trim($j->kode_kelas)) !== mb_strtolower(trim($j->nama_kelas)))
                                             <span class="inline-flex items-center rounded bg-brand-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
                                                 {{ $j->kode_kelas }}
                                             </span>
@@ -191,17 +191,26 @@
                                         </div>
                                     @else
                                         @php
-                                            $live = $statusSesiMap[$j->id] ?? ['label' => 'Belum Hadir', 'color' => 'amber'];
-                                            $liveBadgeCls = match ($live['color']) {
-                                                'red'     => 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300',
-                                                'blue'    => 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
-                                                'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
-                                                'amber'   => 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
-                                                default   => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-                                            };
+                                            $live = $statusSesiMap[$j->id] ?? ['label' => 'Belum Hadir', 'color' => 'amber', 'code' => 'belum_checkin'];
+                                            $eligCode = $eligibility['code'] ?? '';
+                                            $liveCode = $live['code'] ?? '';
+                                            $isBelumDimulai = ($j->status !== 'dibatalkan') && (
+                                                in_array($eligCode, ['belum_dibuka', 'belum_hari_jadwal'], true)
+                                                || ($liveCode === 'belum_checkin' && !($eligibility['can_checkin'] ?? false))
+                                            );
+                                            $displayLiveLabel = $isBelumDimulai ? 'Belum Dimulai' : $live['label'];
+                                            $liveBadgeCls = $isBelumDimulai
+                                                ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                                                : match ($live['color']) {
+                                                    'red'     => 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300',
+                                                    'blue'    => 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
+                                                    'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+                                                    'amber'   => 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
+                                                    default   => 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+                                                };
                                         @endphp
                                         <span class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold {{ $liveBadgeCls }}">
-                                            {{ $live['label'] }}
+                                            {{ $displayLiveLabel }}
                                         </span>
                                     @endif
                                 </td>
@@ -327,7 +336,7 @@
     {{-- Tabel Riwayat Presensi Instruktur --}}
     <div class="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
         <div class="flex flex-col gap-3 border-b border-gray-200 px-5 py-4 lg:flex-row lg:items-center lg:justify-between dark:border-gray-800">
-            <div>
+            <div class="min-w-0 flex-1">
                 <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Riwayat Kehadiran</h2>
                 @if (isset($rekapAbsensi))
                     <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
@@ -342,7 +351,7 @@
                         <span>Izin {{ $rekapAbsensi['izin'] }}</span>
                         <span class="text-red-700 dark:text-red-300">Tidak Hadir {{ $rekapAbsensi['tidak_hadir'] }}</span>
                         @if (($rekapAbsensi['belum_hadir_tanpa_catatan'] ?? 0) > 0)
-                            <span>Belum Hadir {{ $rekapAbsensi['belum_hadir_tanpa_catatan'] }}</span>
+                            <span class="text-slate-600 dark:text-slate-300">Belum Dimulai {{ $rekapAbsensi['belum_hadir_tanpa_catatan'] }}</span>
                         @endif
                         @if (($rekapAbsensi['belum_checkout'] ?? 0) > 0)
                             <span class="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 font-semibold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
@@ -354,7 +363,7 @@
                 @endif
             </div>
 
-            <form method="GET" action="{{ route('instruktur.jadwal.index') }}" class="flex flex-wrap items-end gap-2">
+            <form method="GET" action="{{ route('instruktur.jadwal.index') }}" class="flex shrink-0 flex-wrap items-end gap-2 sm:flex-nowrap">
                 @foreach (request()->except(['dari_absensi', 'sampai_absensi', 'page']) as $k => $v)
                     @if (is_string($v) && $v !== '')
                         <input type="hidden" name="{{ $k }}" value="{{ $v }}" />
@@ -371,12 +380,12 @@
                         class="min-h-[44px] cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white" />
                 </div>
                 <button type="submit"
-                    class="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-brand-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+                    class="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg bg-brand-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
                     Filter
                 </button>
                 @if (($dariAbsensi ?? '') !== '' || ($sampaiAbsensi ?? '') !== '')
                     <a href="{{ route('instruktur.jadwal.index', request()->except(['dari_absensi', 'sampai_absensi', 'page'])) }}"
-                        class="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
+                        class="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
                         Reset
                     </a>
                 @endif

@@ -19,12 +19,18 @@
     <div class="flex-1 divide-y divide-gray-100 dark:divide-gray-800">
         @forelse($mySchedule as $sch)
             @php
-                $colorKey = $sch['status_color'] ?? 'gray';
+                $isBelumDimulai = !($sch['is_dibatalkan'] ?? false)
+                    && !($sch['has_checkin'] ?? false)
+                    && !($sch['can_checkin'] ?? false)
+                    && (($sch['status_code'] ?? '') === 'belum_checkin');
+                $statusLabel = $isBelumDimulai ? 'Belum Dimulai' : ($sch['status'] ?? '-');
+                $colorKey = $isBelumDimulai ? 'slate' : ($sch['status_color'] ?? 'gray');
                 $badgeCls = match ($colorKey) {
                     'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
                     'amber'   => 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
                     'red'     => 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300',
                     'blue'    => 'bg-brand-50 text-brand-700 dark:bg-brand-950/60 dark:text-brand-300',
+                    'slate'   => 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
                     default   => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
                 };
                 $dotCls = match ($colorKey) {
@@ -32,6 +38,7 @@
                     'amber'   => 'bg-amber-500 dark:bg-amber-400',
                     'red'     => 'bg-red-600 dark:bg-red-400',
                     'blue'    => 'bg-brand-600 dark:bg-brand-400',
+                    'slate'   => 'bg-slate-400 dark:bg-slate-400',
                     default   => 'bg-gray-500 dark:bg-gray-400',
                 };
             @endphp
@@ -43,7 +50,7 @@
                         </span>
                         <span class="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold {{ $badgeCls }}">
                             <span class="h-1.5 w-1.5 shrink-0 rounded-full {{ $dotCls }}"></span>
-                            {{ $sch['status'] }}
+                            {{ $statusLabel }}
                         </span>
                     </div>
 

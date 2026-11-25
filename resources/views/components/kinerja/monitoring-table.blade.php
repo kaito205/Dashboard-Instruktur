@@ -60,13 +60,13 @@
                     if ($hadirTepat > 0) $kehadiranParts[] = "{$hadirTepat} Hadir";
                     if ($terlambat > 0) $kehadiranParts[] = "{$terlambat} Terlambat";
                     if ($izin > 0) $kehadiranParts[] = "{$izin} Izin";
-                    if ($alfa > 0) $kehadiranParts[] = "{$alfa} Alfa";
+                    if ($alfa > 0) $kehadiranParts[] = "{$alfa} Tidak Hadir";
 
                     $absensiText = ($totalAbsensi > 0 && !empty($kehadiranParts))
                         ? implode(', ', $kehadiranParts)
                         : 'Belum ada catatan presensi';
                     $absensiTitle = $totalAbsensi > 0
-                        ? "Total {$totalAbsensi} sesi: {$hadirTepat} Hadir, {$terlambat} Terlambat, {$izin} Izin, {$alfa} Alfa"
+                        ? "Total {$totalAbsensi} sesi: {$hadirTepat} Hadir, {$terlambat} Terlambat, {$izin} Izin, {$alfa} Tidak Hadir"
                         : null;
 
                     // Aktivitas

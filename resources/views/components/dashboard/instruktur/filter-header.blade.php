@@ -71,7 +71,7 @@
         <a
             href="{{ route('instruktur.jadwal.index') }}"
             class="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
-            Jadwal &amp; Check-in
+            Jadwal &amp; Presensi
         </a>
         <a
             href="{{ route('instruktur.rapor.index') }}"

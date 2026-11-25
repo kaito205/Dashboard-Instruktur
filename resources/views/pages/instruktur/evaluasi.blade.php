@@ -93,14 +93,23 @@
                                 {{ $ev->created_at?->format('d/m/Y H:i') ?? '-' }}
                             </td>
                             <td class="px-5 py-3.5">
-                                <span class="font-mono text-xs font-semibold text-brand-700 dark:text-brand-300">
-                                    {{ $ev->kodeEvaluasi?->kode ?? '-' }}
-                                </span>
-                                <p class="text-sm font-semibold text-gray-900 dark:text-white">
-                                    {{ $ev->kodeEvaluasi?->nama_kelas ?? 'Evaluasi Kelas' }}
-                                </p>
+                                @php
+                                    $evKode = $ev->kodeEvaluasi?->kode;
+                                    $evNamaKelas = $ev->kodeEvaluasi?->nama_kelas ?? 'Evaluasi Kelas';
+                                    $showEvKode = $evKode && mb_strtolower(trim($evKode)) !== mb_strtolower(trim($evNamaKelas));
+                                @endphp
+                                <div class="flex flex-wrap items-center gap-1.5">
+                                    <p class="text-sm font-semibold text-gray-900 dark:text-white">
+                                        {{ $evNamaKelas }}
+                                    </p>
+                                    @if ($showEvKode)
+                                        <span class="inline-flex items-center rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                                            {{ $evKode }}
+                                        </span>
+                                    @endif
+                                </div>
                                 @if ($ev->materi_evaluasi)
-                                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ $ev->materi_evaluasi }}</p>
+                                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ $ev->materi_evaluasi }}</p>
                                 @endif
                             </td>
                             <td class="whitespace-nowrap px-5 py-3.5 text-xs font-medium text-gray-700 dark:text-gray-300">

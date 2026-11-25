@@ -22,7 +22,7 @@
             ['title' => 'Laporan & Ekspor Data', 'subtitle' => 'Rekap laporan lengkap & unduh Excel/CSV', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'laporan ekspor data rekapitulasi excel csv', 'url' => route('admin.laporan.index')],
             ['title' => 'Cetak Laporan Resmi / PDF', 'subtitle' => 'Halaman cetak laporan siap simpan PDF', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'cetak laporan print pdf dokumen resmi', 'url' => route('admin.laporan.cetak')],
             ['title' => 'Import Data Excel / CSV', 'subtitle' => 'Impor riwayat absensi & evaluasi dari spreadsheet', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'import impor data unggah excel csv spreadsheet', 'url' => route('admin.import.index')],
-            ['title' => 'Pusat Notifikasi & Eskalasi', 'subtitle' => 'Peringatan laporan > 2x24 jam & sertifikasi', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'notifikasi peringatan eskalasi alert', 'url' => route('admin.notifikasi.index')],
+            ['title' => 'Pusat Notifikasi', 'subtitle' => 'Peringatan jurnal tertunda & masa berlaku sertifikasi', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'notifikasi peringatan eskalasi alert', 'url' => route('admin.notifikasi.index')],
             ['title' => 'Manajemen Akun Pengguna', 'subtitle' => 'Kelola akun Admin, Supervisor & Instruktur', 'category' => 'Halaman', 'icon' => 'user', 'keywords' => 'manajemen akun pengguna user admin supervisor instruktur', 'url' => route('admin.pengguna.index')],
             ['title' => 'Pengaturan Sistem & Profil Admin', 'subtitle' => 'Atur identitas LPK, foto profil & bobot kinerja', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'pengaturan sistem konfigurasi bobot indikator profil password foto', 'url' => route('admin.pengaturan.index')],
         ];
@@ -38,7 +38,7 @@
             ['title' => 'Input Observasi Pengajaran', 'subtitle' => 'Catat penilaian observasi kelas langsung', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'observasi supervisor penilaian kelas rekomendasi', 'url' => route('supervisor.observasi.index')],
             ['title' => 'Monitoring & Perbandingan Kinerja', 'subtitle' => 'Bandingkan skor kinerja antar-instruktur', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'monitoring kinerja performa perbandingan skor', 'url' => route('supervisor.kinerja.index')],
             ['title' => 'Laporan Analitik & Cetak PDF', 'subtitle' => 'Rekap laporan kinerja & ekspor dokumen', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'laporan analitik ekspor excel csv cetak pdf', 'url' => route('supervisor.laporan.index')],
-            ['title' => 'Pusat Notifikasi & Eskalasi', 'subtitle' => 'Daftar peringatan operasional aktif', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'notifikasi peringatan eskalasi alert', 'url' => route('supervisor.notifikasi.index')],
+            ['title' => 'Pusat Notifikasi', 'subtitle' => 'Daftar peringatan operasional aktif', 'category' => 'Halaman', 'icon' => 'page', 'keywords' => 'notifikasi peringatan eskalasi alert', 'url' => route('supervisor.notifikasi.index')],
             ['title' => 'Profil & Keamanan Supervisor', 'subtitle' => 'Ubah foto profil, nama & password', 'category' => 'Halaman', 'icon' => 'user', 'keywords' => 'profil keamanan password foto supervisor', 'url' => route('supervisor.profil.index')],
         ];
     } else {

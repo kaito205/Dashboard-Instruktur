@@ -68,7 +68,8 @@
             @endif
         </div>
 
-        <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900"
+             title="Batas skor: {{ $kategoriRanges['sangat_baik'] ?? 'Sangat Baik (>= 85)' }} | {{ $kategoriRanges['baik'] ?? 'Baik (75 - < 85)' }} | {{ $kategoriRanges['cukup'] ?? 'Cukup (60 - < 75)' }} | {{ $kategoriRanges['kurang'] ?? 'Kurang (< 60)' }}">
             <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Kategori Kinerja</p>
             <div class="mt-2">
                 <span class="inline-flex items-center rounded-lg px-3 py-1 text-sm font-bold {{ $kategoriColorClass }}">
@@ -76,7 +77,7 @@
                 </span>
             </div>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                {{ $kategoriRanges['sangat_baik'] ?? 'Sangat Baik (>= 85)' }} | {{ $kategoriRanges['baik'] ?? 'Baik (75 - < 85)' }}
+                Arahkan kursor untuk melihat batas skor kategori
             </p>
         </div>
 

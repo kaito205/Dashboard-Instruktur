@@ -118,7 +118,7 @@
                 <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Rata-rata Kehadiran</p>
                 <p class="mt-1.5 font-mono text-2xl font-bold {{ ($metrics['total_absensi'] ?? 0) > 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-900 dark:text-white' }}">{{ $metrics['persentase_kehadiran'] }}%</p>
                 <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                    Hadir {{ $metrics['hadir_tepat'] }} &middot; Telat {{ $metrics['hadir_terlambat'] }} &middot; Izin {{ $metrics['total_izin'] }} &middot; Alpa {{ $metrics['total_alpa'] }}
+                    Hadir {{ $metrics['hadir_tepat'] }} &middot; Terlambat {{ $metrics['hadir_terlambat'] }} &middot; Izin {{ $metrics['total_izin'] }} &middot; Tidak Hadir {{ $metrics['total_alpa'] }}
                 </p>
                 @if (!empty($metrics['status_filter_aktif']))
                     <p class="mt-1 text-xs font-medium text-brand-700 dark:text-brand-300">
@@ -486,6 +486,10 @@
             </div>
 
             <div class="mt-2 divide-y divide-gray-200 dark:divide-gray-800">
+                @php
+                    $nowWibDash = now('Asia/Jakarta');
+                    $bukaSebelumMenitDash = (int) \App\Models\Setting::get('checkin_buka_sebelum_menit', '30');
+                @endphp
                 @forelse ($todaySchedule as $jadwal)
                     @php
                         $liveStatus = $todayScheduleStatusMap[$jadwal->id] ?? [
@@ -493,13 +497,19 @@
                             'color' => $jadwal->status_color ?? 'gray',
                             'code' => $jadwal->status,
                         ];
-                        $badgeClass = match ($liveStatus['color'] ?? 'gray') {
-                            'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
-                            'red' => 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300',
-                            'amber' => 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
-                            'gray' => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-                            default => 'bg-brand-50 text-brand-700 dark:bg-brand-950/60 dark:text-brand-300',
-                        };
+                        $jamMulaiDash = substr((string) ($jadwal->jam_mulai ?? '00:00'), 0, 5);
+                        $waktuBukaDash = \Carbon\Carbon::parse($nowWibDash->toDateString() . ' ' . $jamMulaiDash . ':00', 'Asia/Jakarta')->subMinutes(max(0, $bukaSebelumMenitDash));
+                        $isBelumDimulaiDash = (($liveStatus['code'] ?? '') === 'belum_checkin') && $nowWibDash->lt($waktuBukaDash);
+                        $displayStatusLabelDash = $isBelumDimulaiDash ? 'Belum Dimulai' : ($liveStatus['label'] ?? '-');
+                        $badgeClass = $isBelumDimulaiDash
+                            ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                            : match ($liveStatus['color'] ?? 'gray') {
+                                'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+                                'red' => 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300',
+                                'amber' => 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
+                                'gray' => 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+                                default => 'bg-brand-50 text-brand-700 dark:bg-brand-950/60 dark:text-brand-300',
+                            };
                     @endphp
                     <div class="flex items-start justify-between gap-3 py-3">
                         <div class="min-w-0">
@@ -508,7 +518,7 @@
                                     {{ substr($jadwal->jam_mulai, 0, 5) }} - {{ substr($jadwal->jam_selesai, 0, 5) }} WIB
                                 </span>
                                 <span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium {{ $badgeClass }}">
-                                    {{ $liveStatus['label'] }}
+                                    {{ $displayStatusLabelDash }}
                                 </span>
                             </div>
                             <h3 class="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">

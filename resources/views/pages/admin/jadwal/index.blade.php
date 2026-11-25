@@ -209,14 +209,17 @@
                                 @endif
                             </td>
                             <td class="px-4 py-3 text-gray-700 dark:text-gray-300">
+                                @php
+                                    $showKodeAdmin = $j->kode_kelas && mb_strtolower(trim($j->kode_kelas)) !== mb_strtolower(trim($j->nama_kelas));
+                                @endphp
                                 @if($j->kelas_id)
                                     <a href="{{ route('admin.kelas.show', $j->kelas_id) }}" class="font-semibold text-gray-900 hover:text-brand-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-white dark:hover:text-brand-300">{{ $j->nama_kelas }}</a>
-                                    @if($j->kode_kelas)
+                                    @if($showKodeAdmin)
                                         <a href="{{ route('admin.kelas.show', $j->kelas_id) }}" class="ml-1 inline-flex rounded-md bg-brand-50 px-1.5 py-0.5 font-mono text-xs font-semibold text-brand-700 hover:bg-brand-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:bg-brand-950/60 dark:text-brand-300 dark:hover:bg-brand-900/60">{{ $j->kode_kelas }}</a>
                                     @endif
                                 @else
                                     <span class="font-semibold text-gray-900 dark:text-white">{{ $j->nama_kelas }}</span>
-                                    @if($j->kode_kelas)
+                                    @if($showKodeAdmin)
                                         <span class="ml-1 inline-flex rounded-md bg-brand-50 px-1.5 py-0.5 font-mono text-xs font-semibold text-brand-700 dark:bg-brand-950/60 dark:text-brand-300">{{ $j->kode_kelas }}</span>
                                     @endif
                                 @endif
@@ -228,16 +231,26 @@
                                     $liveSt = $liveStatusMap[$j->id] ?? [
                                         'label' => $j->status_label,
                                         'color' => $j->status_color ?? 'gray',
+                                        'code'  => $j->status,
                                     ];
-                                    $liveCls = match ($liveSt['color'] ?? 'gray') {
-                                        'blue'    => 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
-                                        'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
-                                        'amber'   => 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
-                                        'red'     => 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300',
-                                        default   => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-                                    };
+                                    $nowWibAdm = now('Asia/Jakarta');
+                                    $bukaMenitAdm = (int) \App\Models\Setting::get('checkin_buka_sebelum_menit', '30');
+                                    $jamMulaiAdm = substr((string) ($j->jam_mulai ?? '00:00'), 0, 5);
+                                    $tglSesiAdm = !$j->is_pola_mingguan && $j->tanggal ? $j->tanggal->toDateString() : $nowWibAdm->toDateString();
+                                    $waktuBukaAdm = \Carbon\Carbon::parse($tglSesiAdm . ' ' . $jamMulaiAdm . ':00', 'Asia/Jakarta')->subMinutes(max(0, $bukaMenitAdm));
+                                    $isBelumDimulaiAdm = (($liveSt['code'] ?? '') === 'belum_checkin') && $nowWibAdm->lt($waktuBukaAdm);
+                                    $displayLiveLabelAdm = $isBelumDimulaiAdm ? 'Belum Dimulai' : $liveSt['label'];
+                                    $liveCls = $isBelumDimulaiAdm
+                                        ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                                        : match ($liveSt['color'] ?? 'gray') {
+                                            'blue'    => 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
+                                            'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
+                                            'amber'   => 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
+                                            'red'     => 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300',
+                                            default   => 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+                                        };
                                 @endphp
-                                <span class="inline-flex rounded-md px-2 py-0.5 text-xs font-medium {{ $liveCls }}">{{ $liveSt['label'] }}</span>
+                                <span class="inline-flex rounded-md px-2 py-0.5 text-xs font-medium {{ $liveCls }}">{{ $displayLiveLabelAdm }}</span>
                             </td>
                             <td class="px-4 py-3">
                                 <div class="flex items-center justify-end gap-1">

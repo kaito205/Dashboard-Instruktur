@@ -39,7 +39,7 @@
                 {{ $metrics['kehadiran_personal'] ?? 0 }}%
             </p>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Hadir {{ $metrics['hadir_tepat'] ?? 0 }} &middot; Telat {{ $metrics['terlambat'] ?? 0 }} &middot; Izin {{ $metrics['izin'] ?? 0 }} &middot; Alpa {{ $metrics['tidak_hadir'] ?? 0 }}
+                Hadir {{ $metrics['hadir_tepat'] ?? 0 }} &middot; Terlambat {{ $metrics['terlambat'] ?? 0 }} &middot; Izin {{ $metrics['izin'] ?? 0 }} &middot; Tidak Hadir {{ $metrics['tidak_hadir'] ?? 0 }}
             </p>
             @if (!empty($metrics['status_filter_aktif']))
                 <p class="mt-1 text-xs font-medium text-brand-700 dark:text-brand-300">
