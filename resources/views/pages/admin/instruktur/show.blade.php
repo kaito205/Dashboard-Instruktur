@@ -91,19 +91,19 @@
             <div class="grid grid-cols-2 gap-px sm:grid-cols-4">
                 <div class="bg-white p-4 dark:bg-gray-900">
                     <p class="text-xs text-gray-600 dark:text-gray-300">Hadir (30 Hari)</p>
-                    <p class="mt-1 font-mono text-2xl font-bold text-emerald-700 dark:text-emerald-300">{{ $statsAbsensi['hadir'] ?? 0 }}</p>
+                    <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $statsAbsensi['hadir'] ?? 0 }}</p>
                 </div>
                 <div class="bg-white p-4 dark:bg-gray-900">
                     <p class="text-xs text-gray-600 dark:text-gray-300">Terlambat</p>
-                    <p class="mt-1 font-mono text-2xl font-bold text-amber-700 dark:text-amber-300">{{ $statsAbsensi['terlambat'] ?? 0 }}</p>
+                    <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $statsAbsensi['terlambat'] ?? 0 }}</p>
                 </div>
                 <div class="bg-white p-4 dark:bg-gray-900">
                     <p class="text-xs text-gray-600 dark:text-gray-300">Izin</p>
-                    <p class="mt-1 font-mono text-2xl font-bold text-brand-700 dark:text-brand-300">{{ $statsAbsensi['izin'] ?? 0 }}</p>
+                    <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $statsAbsensi['izin'] ?? 0 }}</p>
                 </div>
                 <div class="bg-white p-4 dark:bg-gray-900">
                     <p class="text-xs text-gray-600 dark:text-gray-300">Evaluasi ({{ $statsEvaluasi['total'] ?? 0 }})</p>
-                    <p class="mt-1 font-mono text-2xl font-bold text-gray-900 dark:text-white">{{ ($statsEvaluasi['total'] ?? 0) > 0 ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
+                    <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ ($statsEvaluasi['total'] ?? 0) > 0 ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
                 </div>
             </div>
         </div>
@@ -155,10 +155,15 @@
                         <div class="flex flex-wrap items-center gap-2">
                             <p class="font-medium text-gray-900 dark:text-white">{{ $akt->materi_disampaikan ?: ($akt->jadwal->nama_kelas ?? 'Sesi Mengajar') }}</p>
                             <span class="inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium {{ $aktKelasCls }}">
-                                Kelas: {{ $aktKelasInfo['label'] }}
+                                {{ $aktKelasInfo['label'] }}
                             </span>
                         </div>
-                        <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">{{ $akt->status_label }} &middot; {{ $akt->verifikasi_label }} &middot; Durasi: {{ $akt->durasi_aktual_label }}</p>
+                        <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
+                            {{ $akt->verifikasi_label }}
+                            @if ($akt->durasi_aktual_label && $akt->durasi_aktual_label !== '-')
+                                &middot; Durasi: {{ $akt->durasi_aktual_label }}
+                            @endif
+                        </p>
                     </div>
                     <span class="font-mono text-xs text-gray-600 dark:text-gray-300">{{ $akt->tanggal->format('d/m/Y') }}</span>
                 </div>

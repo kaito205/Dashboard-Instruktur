@@ -4,23 +4,28 @@
 @section('content')
 <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between no-print">
     <h1 class="text-xl font-bold text-gray-900 dark:text-white">Laporan</h1>
-    <div class="flex flex-wrap gap-2">
-        <a href="{{ route(($routePrefix ?? 'admin') . '.laporan.export', $activeFilterParams) }}"
-           class="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+    <div x-data="{ exportOpen: false }" class="relative" @click.outside="exportOpen = false">
+        <button type="button" @click="exportOpen = !exportOpen"
+            class="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-            Ekspor CSV
-        </a>
-        <a href="{{ route(($routePrefix ?? 'admin') . '.laporan.export-excel', $activeFilterParams) }}"
-           class="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M4 6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2H6a2 2 0 01-2-2V6z"/></svg>
-            Ekspor Excel (.xlsx)
-        </a>
-        <a href="{{ route(($routePrefix ?? 'admin') . '.laporan.cetak', $activeFilterParams) }}"
-           target="_blank" rel="noopener"
-           class="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-            Cetak / PDF
-        </a>
+            <span>Export</span>
+            <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': exportOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="exportOpen" x-cloak
+            class="absolute right-0 z-30 mt-1.5 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+            <a href="{{ route(($routePrefix ?? 'admin') . '.laporan.export-excel', $activeFilterParams) }}"
+                class="flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700">
+                <span>Export Excel (.xlsx)</span>
+            </a>
+            <a href="{{ route(($routePrefix ?? 'admin') . '.laporan.export', $activeFilterParams) }}"
+                class="flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700">
+                <span>Export CSV (.csv)</span>
+            </a>
+            <a href="{{ route(($routePrefix ?? 'admin') . '.laporan.cetak', $activeFilterParams) }}" target="_blank" rel="noopener"
+                class="flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700">
+                <span>Cetak / Simpan PDF</span>
+            </a>
+        </div>
     </div>
 </div>
 
@@ -349,8 +354,15 @@
                             @endif
                         </td>
                         <td class="px-4 py-3 text-gray-800 dark:text-gray-200">
-                            <p>{{ $row->jadwal?->nama_kelas ?? '-' }} ({{ (int) ($row->jumlah_peserta_hadir ?? 0) }} peserta)</p>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">Durasi: {{ $row->durasi_aktual_label }}</p>
+                            <p>
+                                {{ $row->jadwal?->nama_kelas ?? '-' }}
+                                @if ($row->jumlah_peserta_hadir !== null)
+                                    ({{ (int) $row->jumlah_peserta_hadir }} orang)
+                                @endif
+                            </p>
+                            @if ($row->durasi_aktual_label && $row->durasi_aktual_label !== '-')
+                                <p class="text-xs text-gray-500 dark:text-gray-400">Durasi: {{ $row->durasi_aktual_label }}</p>
+                            @endif
                         </td>
                         <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ $row->materi_disampaikan ?: '-' }}</td>
                         <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
@@ -363,12 +375,17 @@
                                     default   => 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
                                 };
                             @endphp
-                            <span class="inline-flex rounded-md px-2 py-0.5 font-medium {{ $lapKelasCls }}">
-                                Kelas: {{ $lapKelasInfo['label'] }}
+                            <span class="inline-flex rounded-md px-2.5 py-0.5 font-semibold {{ $lapKelasCls }}">
+                                {{ $lapKelasInfo['label'] }}
                             </span>
-                            <p class="mt-1">{{ $row->status_label }} ({{ $row->verifikasi_label }})</p>
                         </td>
-                        <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{{ !empty($rincianAktivitas) ? implode(' | ', $rincianAktivitas) : '-' }}</td>
+                        <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                            @if (!empty($rincianAktivitas))
+                                {{ implode(' | ', $rincianAktivitas) }}
+                            @else
+                                <span class="text-slate-400">-</span>
+                            @endif
+                        </td>
                     </tr>
                     @empty
                     <tr><td colspan="6" class="px-4 py-8 text-center text-gray-600 dark:text-gray-300">Belum ada aktivitas mengajar yang tercatat pada periode ini.</td></tr>

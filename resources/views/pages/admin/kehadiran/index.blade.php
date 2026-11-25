@@ -129,59 +129,68 @@
     <div class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-3 lg:grid-cols-6 dark:border-gray-800 dark:bg-gray-800">
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Total Catatan</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-gray-900 dark:text-white">{{ $ringkasan['total'] }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasan['total'] }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Hadir</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-emerald-700 dark:text-emerald-300">{{ $ringkasan['hadir'] }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasan['hadir'] }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Terlambat (&gt; {{ $ringkasan['toleransi_terlambat_menit'] ?? 15 }} mnt)</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-amber-700 dark:text-amber-300">{{ $ringkasan['terlambat'] }}</p>
+            <div class="flex items-center justify-between gap-1">
+                <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Terlambat</p>
+                <span class="inline-flex cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    title="Toleransi keterlambatan: &gt; {{ $ringkasan['toleransi_terlambat_menit'] ?? 15 }} menit dari jam mulai jadwal.">
+                    <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+                </span>
+            </div>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasan['terlambat'] }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Izin</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-gray-900 dark:text-white">{{ $ringkasan['izin'] }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasan['izin'] }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Tidak Hadir</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-red-700 dark:text-red-300">{{ $ringkasan['tidak_hadir'] }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasan['tidak_hadir'] }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Kehadiran</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-brand-600 dark:text-brand-300">{{ $ringkasan['persentase'] }}%</p>
-            @if (!empty($ringkasan['status_filter_aktif']))
-                <p class="mt-1 text-xs font-medium text-brand-700 dark:text-brand-300">
-                    Filter {{ $ringkasan['status_filter_label'] }}: {{ $ringkasan['status_filter_count'] }}/{{ $ringkasan['total'] }} ({{ $ringkasan['status_filter_persentase'] }}%)
-                </p>
-            @endif
+            <div class="flex items-center justify-between gap-1">
+                <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Kehadiran</p>
+                @if (!empty($ringkasan['status_filter_aktif']))
+                    <span class="inline-flex cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        title="Filter {{ $ringkasan['status_filter_label'] }}: {{ $ringkasan['status_filter_count'] }}/{{ $ringkasan['total'] }} ({{ $ringkasan['status_filter_persentase'] }}%)">
+                        <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+                    </span>
+                @endif
+            </div>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasan['persentase'] }}%</p>
         </div>
     </div>
     @else
     <div class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-3 lg:grid-cols-6 dark:border-gray-800 dark:bg-gray-800">
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Total Jurnal</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-gray-900 dark:text-white">{{ $ringkasanAktivitas['total'] ?? 0 }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasanAktivitas['total'] ?? 0 }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Dikonfirmasi</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-emerald-700 dark:text-emerald-300">{{ $ringkasanAktivitas['dikonfirmasi'] ?? 0 }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasanAktivitas['dikonfirmasi'] ?? 0 }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Belum Dikonfirmasi</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-amber-700 dark:text-amber-300">{{ $ringkasanAktivitas['belum_dikonfirmasi'] ?? 0 }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasanAktivitas['belum_dikonfirmasi'] ?? 0 }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Diverifikasi</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-brand-600 dark:text-brand-300">{{ $ringkasanAktivitas['diverifikasi'] ?? 0 }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasanAktivitas['diverifikasi'] ?? 0 }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Menunggu Verifikasi</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-gray-900 dark:text-white">{{ $ringkasanAktivitas['menunggu'] ?? 0 }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasanAktivitas['menunggu'] ?? 0 }}</p>
         </div>
         <div class="bg-white p-4 dark:bg-gray-900">
             <p class="text-xs font-medium text-gray-600 dark:text-gray-300">Perlu Revisi</p>
-            <p class="mt-1 font-mono text-2xl font-semibold text-red-700 dark:text-red-300">{{ $ringkasanAktivitas['perlu_revisi'] ?? 0 }}</p>
+            <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $ringkasanAktivitas['perlu_revisi'] ?? 0 }}</p>
         </div>
     </div>
     @endif
@@ -536,9 +545,22 @@
                         <tr class="align-top hover:bg-gray-50 dark:hover:bg-gray-800/30">
                             <td class="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
                                 <p class="font-semibold text-gray-900 dark:text-white">{{ $akt->tanggal->format('d/m/Y') }}</p>
-                                <p class="mt-0.5">{{ $akt->jam_mulai_aktual ? substr($akt->jam_mulai_aktual, 0, 5) : '-' }} - {{ $akt->jam_selesai_aktual ? substr($akt->jam_selesai_aktual, 0, 5) : '-' }}</p>
-                                <p class="font-sans text-xs text-gray-600 dark:text-gray-300">Durasi: {{ $akt->durasi_aktual_label }}</p>
-                                <p class="font-sans text-xs text-gray-600 dark:text-gray-300">Peserta: {{ $akt->jumlah_peserta_hadir ?? 0 }} orang</p>
+                                @if ($akt->jam_mulai_aktual || $akt->jam_selesai_aktual)
+                                    <p class="mt-0.5">{{ $akt->jam_mulai_aktual ? substr($akt->jam_mulai_aktual, 0, 5) : '-' }} - {{ $akt->jam_selesai_aktual ? substr($akt->jam_selesai_aktual, 0, 5) : '-' }} WIB</p>
+                                    @if ($akt->durasi_aktual_label && $akt->durasi_aktual_label !== '-')
+                                        <p class="font-sans text-xs text-gray-600 dark:text-gray-300">Durasi: {{ $akt->durasi_aktual_label }}</p>
+                                    @endif
+                                @else
+                                    <p class="mt-0.5 text-slate-400">-</p>
+                                @endif
+                                <p class="font-sans text-xs text-gray-600 dark:text-gray-300">
+                                    Peserta:
+                                    @if ($akt->jumlah_peserta_hadir !== null)
+                                        {{ $akt->jumlah_peserta_hadir }} orang
+                                    @else
+                                        <span class="text-slate-400">-</span>
+                                    @endif
+                                </p>
                             </td>
                             <td class="px-4 py-3 text-xs">
                                 <p class="font-semibold text-gray-900 dark:text-white">{{ $akt->instruktur?->nama_lengkap ?? '-' }}</p>
@@ -572,33 +594,13 @@
                                     <p class="mt-0.5"><span class="font-medium text-gray-500 dark:text-gray-400">Kendala:</span> {{ $akt->kendala_kegiatan }}</p>
                                 @endif
                                 @if(!$akt->catatan && !$akt->kendala_kegiatan && !$akt->hasil_pembelajaran)
-                                    <span>-</span>
+                                    <span class="text-slate-400">-</span>
                                 @endif
                             </td>
                             <td class="px-4 py-3 space-y-1 text-xs">
-                                <div class="flex flex-wrap gap-1">
-                                    <span class="inline-flex rounded-md px-2 py-0.5 font-medium {{ $kelasBadgeCls }}">
-                                        Kelas: {{ $kelasInfo['label'] }}
-                                    </span>
-                                    <span class="inline-flex rounded-md px-2 py-0.5 font-medium {{ $akt->status_verifikasi === 'diverifikasi' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : ($akt->status_verifikasi === 'perlu_revisi' ? 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300') }}">
-                                        {{ $akt->verifikasi_label }}
-                                    </span>
-                                </div>
-                                @if($eskalasiInfo)
-                                    <p>
-                                        <span class="inline-flex rounded-md px-2 py-0.5 font-semibold {{ $eskalasiInfo['color'] === 'red' ? 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300' }}">
-                                            {{ $eskalasiInfo['label'] }}
-                                        </span>
-                                    </p>
-                                @endif
-                                @if(isset($presensiAktivitasMap[$akt->id]) && ! $presensiAktivitasMap[$akt->id])
-                                    <p>
-                                        <span class="inline-flex rounded-md bg-red-50 px-2 py-0.5 font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300" title="Tidak ditemukan catatan check-in instruktur pada jadwal dan tanggal ini">
-                                            Tanpa Presensi
-                                        </span>
-                                    </p>
-                                @endif
-                                <p class="text-xs text-gray-600 dark:text-gray-300">Konfirmasi: {{ $akt->status_label }}</p>
+                                <span class="inline-flex rounded-md px-2.5 py-0.5 font-semibold {{ $kelasBadgeCls }}">
+                                    {{ $kelasInfo['label'] }}
+                                </span>
                                 @if($akt->catatan_supervisor)
                                     <p class="text-xs text-gray-700 dark:text-gray-200">Catatan: {{ $akt->catatan_supervisor }}</p>
                                 @endif

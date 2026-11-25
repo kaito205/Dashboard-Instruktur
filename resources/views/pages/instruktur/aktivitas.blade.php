@@ -52,14 +52,28 @@
                     + Catat Jurnal Baru
                 </button>
             @endif
-            <a href="{{ route('instruktur.aktivitas.export.excel', request()->query()) }}"
-                class="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-emerald-600 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-emerald-500 dark:bg-gray-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40">
-                Export Excel
-            </a>
-            <a href="{{ route('instruktur.aktivitas.export.pdf', request()->query()) }}" target="_blank" rel="noopener"
-                class="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
-                Export PDF
-            </a>
+
+            {{-- Dropdown Export Gabungan --}}
+            <div x-data="{ exportOpen: false }" class="relative" @click.outside="exportOpen = false">
+                <button type="button" @click="exportOpen = !exportOpen"
+                    class="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                    <svg class="h-4 w-4 text-slate-500 dark:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    <span>Export</span>
+                    <svg class="h-3.5 w-3.5 text-slate-400 transition-transform" :class="{ 'rotate-180': exportOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                <div x-show="exportOpen" x-cloak
+                    class="absolute right-0 z-30 mt-1.5 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                    <a href="{{ route('instruktur.aktivitas.export.excel', request()->query()) }}"
+                        class="flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700">
+                        <span>Export Excel (.xlsx)</span>
+                    </a>
+                    <a href="{{ route('instruktur.aktivitas.export.pdf', request()->query()) }}" target="_blank" rel="noopener"
+                        class="flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700">
+                        <span>Export PDF / Cetak</span>
+                    </a>
+                </div>
+            </div>
+
             <a href="{{ route('instruktur.jadwal.index') }}"
                 class="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
                 Jadwal &amp; Presensi
@@ -67,69 +81,85 @@
         </div>
     </div>
 
-    {{-- Kartu Statistik Ringkas --}}
+    {{-- Kartu Statistik Ringkas (Tinggi Sejajar & Angka Netral) --}}
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
-            title="Kepatuhan Pelaporan hanya menghitung sesi terjadwal pada periode aktif ({{ \Carbon\Carbon::parse($occDari)->format('d/m/Y') }} - {{ \Carbon\Carbon::parse($occSampai)->format('d/m/Y') }}) yang sudah memiliki jurnal. Total Laporan mencakup seluruh riwayat sesuai filter tabel.">
+        <div class="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
             <div class="flex items-center justify-between gap-2">
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Kepatuhan Pelaporan</p>
+                <div class="flex items-center gap-1.5">
+                    <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Kepatuhan Pelaporan</p>
+                    <span class="inline-flex cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        title="Hanya menghitung jurnal yang cocok dengan sesi terjadwal pada periode aktif ({{ \Carbon\Carbon::parse($occDari)->format('d/m/Y') }} - {{ \Carbon\Carbon::parse($occSampai)->format('d/m/Y') }}).">
+                        <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+                    </span>
+                </div>
                 <span class="inline-flex rounded-md px-2 py-0.5 text-[11px] font-semibold {{ $kepatuhanBadgeCls }}">
                     {{ $stats['kepatuhan_label'] }}
                 </span>
             </div>
-            <p class="mt-1.5 text-2xl font-bold {{ $kepatuhanTextCls }}">{{ $stats['persen_kepatuhan'] }}%</p>
-            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-                <div class="h-full rounded-full {{ $kepatuhanBarCls }}" style="width: {{ min(100, max(0, (float) $stats['persen_kepatuhan'])) }}%"></div>
+            <div>
+                <p class="mt-1.5 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $stats['persen_kepatuhan'] }}%</p>
+                <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    {{ $stats['sesi_terlapor_periode'] }}/{{ $stats['total_sesi_periode'] }} sesi terjadwal
+                </p>
             </div>
-            <p class="mt-1.5 text-xs text-gray-600 dark:text-gray-300">
-                {{ $stats['sesi_terlapor_periode'] }}/{{ $stats['total_sesi_periode'] }} sesi terjadwal periode ini
-            </p>
-            <p class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                Hanya menghitung jurnal yang cocok dengan jadwal aktif periode berjalan
-            </p>
         </div>
 
-        <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Total Laporan</p>
-            <p class="mt-1.5 text-2xl font-bold text-gray-900 dark:text-white">{{ $stats['total_laporan'] }}</p>
-            <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                {{ $stats['terlaksana'] }} terlaksana
-            </p>
-        </div>
-
-        <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Terverifikasi</p>
-            <p class="mt-1.5 text-2xl font-bold text-emerald-700 dark:text-emerald-400">{{ $stats['diverifikasi'] }}</p>
-            <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                Disetujui Supervisor
-            </p>
-        </div>
-
-        <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Menunggu / Revisi</p>
-            <p class="mt-1.5 text-2xl font-bold {{ $stats['perlu_revisi'] > 0 ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-white' }}">
-                {{ $stats['menunggu'] + $stats['perlu_revisi'] }}
-            </p>
-            <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                {{ $stats['menunggu'] }} tunggu &middot;
-                <span class="{{ $stats['perlu_revisi'] > 0 ? 'font-semibold text-red-700 dark:text-red-400' : '' }}">
-                    {{ $stats['perlu_revisi'] }} revisi
+        <div class="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <div class="flex items-center justify-between gap-2">
+                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Total Laporan</p>
+                <span class="inline-flex cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    title="Total seluruh riwayat laporan jurnal yang tercatat sesuai filter tabel.">
+                    <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
                 </span>
-            </p>
+            </div>
+            <div>
+                <p class="mt-1.5 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $stats['total_laporan'] }}</p>
+                <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    {{ $stats['terlaksana'] }} terlaksana
+                </p>
+            </div>
         </div>
 
-        <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Belum Ada Jurnal</p>
-            <p class="mt-1.5 text-2xl font-bold {{ ($sesiTerlewatTotal ?? 0) > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400' }}">
-                {{ $sesiTerlewatTotal ?? 0 }}
-            </p>
-            <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+        <div class="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Terverifikasi</p>
+            <div>
+                <p class="mt-1.5 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $stats['diverifikasi'] }}</p>
+                <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    Disetujui Supervisor
+                </p>
+            </div>
+        </div>
+
+        <div class="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Menunggu / Revisi</p>
+            <div>
+                <p class="mt-1.5 font-mono text-2xl font-bold text-slate-900 dark:text-white">
+                    {{ $stats['menunggu'] + $stats['perlu_revisi'] }}
+                </p>
+                <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    {{ $stats['menunggu'] }} tunggu &middot; {{ $stats['perlu_revisi'] }} revisi
+                </p>
+            </div>
+        </div>
+
+        <div class="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <div class="flex items-center justify-between gap-2">
+                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Belum Ada Jurnal</p>
                 @if (($stats['eskalasi_count'] ?? 0) > 0)
-                    <span class="font-semibold text-red-700 dark:text-red-400">{{ $stats['eskalasi_count'] }} lewat &gt;48 jam</span>
-                @else
-                    Periode aktif
+                    <span class="inline-flex cursor-help text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        title="{{ $stats['eskalasi_count'] }} sesi sudah melewati batas waktu pelaporan.">
+                        <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+                    </span>
                 @endif
-            </p>
+            </div>
+            <div>
+                <p class="mt-1.5 font-mono text-2xl font-bold text-slate-900 dark:text-white">
+                    {{ $sesiTerlewatTotal ?? 0 }}
+                </p>
+                <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                    Periode aktif
+                </p>
+            </div>
         </div>
     </div>
 
@@ -341,40 +371,30 @@
                                 @endif
                             </td>
                             <td class="whitespace-nowrap px-5 py-3.5 text-xs text-gray-700 dark:text-gray-300">
-                                <p class="font-mono">
-                                    {{ $ra->jam_mulai_aktual ? substr($ra->jam_mulai_aktual, 0, 5) : '-' }} - {{ $ra->jam_selesai_aktual ? substr($ra->jam_selesai_aktual, 0, 5) : '-' }} WIB
-                                </p>
-                                <p class="mt-0.5 text-[11px] font-medium text-gray-600 dark:text-gray-400">
-                                    Durasi: {{ $ra->durasi_aktual_label }}
-                                </p>
+                                @if ($ra->jam_mulai_aktual || $ra->jam_selesai_aktual)
+                                    <p class="font-mono">
+                                        {{ $ra->jam_mulai_aktual ? substr($ra->jam_mulai_aktual, 0, 5) : '-' }} - {{ $ra->jam_selesai_aktual ? substr($ra->jam_selesai_aktual, 0, 5) : '-' }} WIB
+                                    </p>
+                                    @if ($ra->durasi_aktual_label && $ra->durasi_aktual_label !== '-')
+                                        <p class="mt-0.5 text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                                            Durasi: {{ $ra->durasi_aktual_label }}
+                                        </p>
+                                    @endif
+                                @else
+                                    <span class="text-slate-400">-</span>
+                                @endif
                             </td>
                             <td class="whitespace-nowrap px-5 py-3.5 text-xs font-semibold text-gray-800 dark:text-gray-200">
-                                {{ $ra->jumlah_peserta_hadir }} orang
+                                @if ($ra->jumlah_peserta_hadir !== null)
+                                    {{ $ra->jumlah_peserta_hadir }} orang
+                                @else
+                                    <span class="font-normal text-slate-400">-</span>
+                                @endif
                             </td>
-                            <td class="px-5 py-3.5 space-y-1 text-xs">
-                                <div class="flex flex-wrap gap-1">
-                                    <span class="inline-flex items-center rounded-md px-2 py-0.5 font-semibold {{ $kelasBadgeCls }}">
-                                        Kelas: {{ $kelasInfo['label'] }}
-                                    </span>
-                                    <span class="inline-flex items-center rounded-md px-2 py-0.5 font-semibold
-                                        {{ $ra->status_konfirmasi === 'dikonfirmasi' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' }}">
-                                        {{ $ra->status_label }}
-                                    </span>
-                                </div>
-                                @if ($eskalasiInfo)
-                                    <p>
-                                        <span class="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold {{ $eskalasiInfo['color'] === 'red' ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' }}">
-                                            {{ $eskalasiInfo['label'] }}
-                                        </span>
-                                    </p>
-                                @endif
-                                @if (! $hasPresensi)
-                                    <p>
-                                        <span class="inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-950/60 dark:text-red-300" title="Tidak ditemukan catatan check-in pada jadwal dan tanggal ini">
-                                            Tanpa Presensi
-                                        </span>
-                                    </p>
-                                @endif
+                            <td class="px-5 py-3.5 text-xs">
+                                <span class="inline-flex items-center rounded-md px-2.5 py-0.5 font-semibold {{ $kelasBadgeCls }}">
+                                    {{ $kelasInfo['label'] }}
+                                </span>
                             </td>
                             <td class="px-5 py-3.5 text-xs">
                                 <span class="inline-flex items-center rounded-md px-2.5 py-0.5 font-semibold

@@ -62,19 +62,19 @@
     <div class="space-y-6 lg:col-span-2">
         <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div class="rounded-xl border border-gray-200 bg-white p-4 text-center dark:border-gray-800 dark:bg-gray-900">
-                <p class="font-mono text-2xl font-bold text-green-700 dark:text-green-400">{{ $statsAbsensi['hadir'] ?? 0 }}</p>
+                <p class="font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $statsAbsensi['hadir'] ?? 0 }}</p>
                 <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">Hadir (30 Hari)</p>
             </div>
             <div class="rounded-xl border border-gray-200 bg-white p-4 text-center dark:border-gray-800 dark:bg-gray-900">
-                <p class="font-mono text-2xl font-bold text-amber-700 dark:text-amber-400">{{ $statsAbsensi['terlambat'] ?? 0 }}</p>
+                <p class="font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $statsAbsensi['terlambat'] ?? 0 }}</p>
                 <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">Terlambat</p>
             </div>
             <div class="rounded-xl border border-gray-200 bg-white p-4 text-center dark:border-gray-800 dark:bg-gray-900">
-                <p class="font-mono text-2xl font-bold text-blue-700 dark:text-blue-400">{{ $statsAbsensi['izin'] ?? 0 }}</p>
+                <p class="font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ $statsAbsensi['izin'] ?? 0 }}</p>
                 <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">Izin</p>
             </div>
             <div class="rounded-xl border border-gray-200 bg-white p-4 text-center dark:border-gray-800 dark:bg-gray-900">
-                <p class="font-mono text-2xl font-bold text-brand-700 dark:text-brand-400">{{ ($statsEvaluasi['total'] ?? 0) > 0 ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
+                <p class="font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ ($statsEvaluasi['total'] ?? 0) > 0 ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
                 <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">Rata-rata Evaluasi ({{ $statsEvaluasi['total'] ?? 0 }})</p>
             </div>
         </div>
@@ -125,10 +125,15 @@
                         <div class="flex flex-wrap items-center gap-2">
                             <p class="font-medium text-gray-900 dark:text-white">{{ $akt->materi_disampaikan ?: ($akt->jadwal->nama_kelas ?? 'Sesi Mengajar') }}</p>
                             <span class="inline-flex rounded-md px-2 py-0.5 text-[11px] font-medium {{ $aktKelasCls }}">
-                                Kelas: {{ $aktKelasInfo['label'] }}
+                                {{ $aktKelasInfo['label'] }}
                             </span>
                         </div>
-                        <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">Status: {{ $akt->status_label }} &middot; {{ $akt->verifikasi_label }} &middot; Durasi: {{ $akt->durasi_aktual_label }}</p>
+                        <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
+                            {{ $akt->verifikasi_label }}
+                            @if ($akt->durasi_aktual_label && $akt->durasi_aktual_label !== '-')
+                                &middot; Durasi: {{ $akt->durasi_aktual_label }}
+                            @endif
+                        </p>
                     </div>
                     <span class="shrink-0 font-mono text-xs text-gray-600 dark:text-gray-300">{{ $akt->tanggal->format('d/m/Y') }}</span>
                 </div>

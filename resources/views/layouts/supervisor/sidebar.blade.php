@@ -26,7 +26,12 @@
     @mouseenter="if (!$store.sidebar.isExpanded) $store.sidebar.setHovered(true)"
     @mouseleave="$store.sidebar.setHovered(false)">
 
-    @php $appIdentity = \App\Models\Setting::getAppIdentity(); @endphp
+    @php
+        $appIdentity = \App\Models\Setting::getAppIdentity();
+        $shortLpkName = str_contains(strtolower((string) ($appIdentity['lpk_name'] ?? '')), 'cipta tungga indonesia')
+            ? 'LPK CTI Ciamis'
+            : ($appIdentity['lpk_name'] ?: 'LPK CTI Ciamis');
+    @endphp
     <div class="pt-7 pb-6 flex"
         :class="(!$store.sidebar.isExpanded && !$store.sidebar.isHovered && !$store.sidebar.isMobileOpen) ? 'xl:justify-center' : 'justify-start'">
         <a href="{{ route('supervisor.dashboard') }}"
@@ -36,7 +41,7 @@
                 class="h-10 w-auto rounded-lg object-contain shrink-0" />
             <span x-show="$store.sidebar.isExpanded || $store.sidebar.isHovered || $store.sidebar.isMobileOpen"
                 class="min-w-0 text-sm font-bold text-gray-900 dark:text-white leading-tight">
-                <span class="block truncate" title="{{ $appIdentity['lpk_name'] }}">{{ $appIdentity['lpk_name'] }}</span>
+                <span class="block whitespace-nowrap" title="{{ $appIdentity['lpk_name'] }}">{{ $shortLpkName }}</span>
                 <span class="block text-xs font-medium text-brand-600 dark:text-brand-300">Panel Supervisor</span>
             </span>
         </a>

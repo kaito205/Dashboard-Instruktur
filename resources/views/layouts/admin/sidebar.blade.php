@@ -30,7 +30,12 @@
     @mouseenter="if (!$store.sidebar.isExpanded) $store.sidebar.setHovered(true)"
     @mouseleave="$store.sidebar.setHovered(false)">
 
-    @php $appIdentity = \App\Models\Setting::getAppIdentity(); @endphp
+    @php
+        $appIdentity = \App\Models\Setting::getAppIdentity();
+        $shortLpkName = str_contains(strtolower((string) ($appIdentity['lpk_name'] ?? '')), 'cipta tungga indonesia')
+            ? 'LPK CTI Ciamis'
+            : ($appIdentity['lpk_name'] ?: 'LPK CTI Ciamis');
+    @endphp
     <div class="mb-3 flex border-b border-gray-200 py-4 dark:border-gray-800"
         :class="(!$store.sidebar.isExpanded && !$store.sidebar.isHovered && !$store.sidebar.isMobileOpen) ? 'xl:justify-center' : 'justify-start'">
         <a href="{{ route('admin.dashboard') }}"
@@ -40,7 +45,7 @@
                 class="h-9 w-auto shrink-0 rounded-lg object-contain" />
             <span x-show="$store.sidebar.isExpanded || $store.sidebar.isHovered || $store.sidebar.isMobileOpen"
                 class="min-w-0 leading-tight">
-                <span class="block truncate text-sm font-bold text-gray-900 dark:text-white" title="{{ $appIdentity['lpk_name'] }}">{{ $appIdentity['lpk_name'] }}</span>
+                <span class="block text-sm font-bold whitespace-nowrap text-gray-900 dark:text-white" title="{{ $appIdentity['lpk_name'] }}">{{ $shortLpkName }}</span>
                 <span class="block text-xs font-medium text-gray-600 dark:text-gray-300">Admin</span>
             </span>
         </a>
