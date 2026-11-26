@@ -53,6 +53,9 @@ class NotifikasiController extends Controller
         $userId = (int) auth()->id();
         $dari   = $validated['dari'] ?? now()->startOfMonth()->toDateString();
         $sampai = $validated['sampai'] ?? now()->endOfMonth()->toDateString();
+        if ($dari > $sampai) {
+            [$dari, $sampai] = [$sampai, $dari];
+        }
 
         $alerts  = $this->alertService->getSummaryAlerts($dari, $sampai, $this->roleName, $userId);
         $matched = ($alerts['items_aktif'] ?? collect())->firstWhere('alert_key', $validated['alert_key']);
@@ -76,11 +79,13 @@ class NotifikasiController extends Controller
 
         if ($request->expectsJson()) {
             return response()->json([
-                'ok'            => true,
-                'alert_key'     => $validated['alert_key'],
-                'total_aktif'   => $updated['total_peringatan'] ?? 0,
-                'total_riwayat' => $updated['total_riwayat'] ?? 0,
-                'message'       => 'Notifikasi ditandai sudah ditinjau.',
+                'ok'               => true,
+                'alert_key'        => $validated['alert_key'],
+                'total_peringatan' => $updated['total_peringatan'] ?? 0,
+                'total_info'       => $updated['total_info'] ?? 0,
+                'total_aktif'      => $updated['total_semua_aktif'] ?? $updated['total_aktif'] ?? $updated['total_peringatan'] ?? 0,
+                'total_riwayat'    => $updated['total_riwayat'] ?? 0,
+                'message'          => 'Notifikasi ditandai sudah ditinjau.',
             ]);
         }
 
@@ -97,6 +102,9 @@ class NotifikasiController extends Controller
         $userId = (int) auth()->id();
         $dari   = $validated['dari'] ?? now()->startOfMonth()->toDateString();
         $sampai = $validated['sampai'] ?? now()->endOfMonth()->toDateString();
+        if ($dari > $sampai) {
+            [$dari, $sampai] = [$sampai, $dari];
+        }
 
         $count   = $this->alertService->markAllReviewed($userId, $dari, $sampai, $this->roleName);
         $updated = $this->alertService->getSummaryAlerts($dari, $sampai, $this->roleName, $userId);
@@ -107,11 +115,13 @@ class NotifikasiController extends Controller
 
         if ($request->expectsJson()) {
             return response()->json([
-                'ok'            => true,
-                'marked_count'  => $count,
-                'total_aktif'   => $updated['total_peringatan'] ?? 0,
-                'total_riwayat' => $updated['total_riwayat'] ?? 0,
-                'message'       => $message,
+                'ok'               => true,
+                'marked_count'     => $count,
+                'total_peringatan' => $updated['total_peringatan'] ?? 0,
+                'total_info'       => $updated['total_info'] ?? 0,
+                'total_aktif'      => $updated['total_semua_aktif'] ?? $updated['total_aktif'] ?? $updated['total_peringatan'] ?? 0,
+                'total_riwayat'    => $updated['total_riwayat'] ?? 0,
+                'message'          => $message,
             ]);
         }
 
@@ -129,17 +139,22 @@ class NotifikasiController extends Controller
         $userId = (int) auth()->id();
         $dari   = $validated['dari'] ?? now()->startOfMonth()->toDateString();
         $sampai = $validated['sampai'] ?? now()->endOfMonth()->toDateString();
+        if ($dari > $sampai) {
+            [$dari, $sampai] = [$sampai, $dari];
+        }
 
         $this->alertService->restoreReviewed($userId, $validated['alert_key']);
         $updated = $this->alertService->getSummaryAlerts($dari, $sampai, $this->roleName, $userId);
 
         if ($request->expectsJson()) {
             return response()->json([
-                'ok'            => true,
-                'alert_key'     => $validated['alert_key'],
-                'total_aktif'   => $updated['total_peringatan'] ?? 0,
-                'total_riwayat' => $updated['total_riwayat'] ?? 0,
-                'message'       => 'Notifikasi dikembalikan ke daftar aktif.',
+                'ok'               => true,
+                'alert_key'        => $validated['alert_key'],
+                'total_peringatan' => $updated['total_peringatan'] ?? 0,
+                'total_info'       => $updated['total_info'] ?? 0,
+                'total_aktif'      => $updated['total_semua_aktif'] ?? $updated['total_aktif'] ?? $updated['total_peringatan'] ?? 0,
+                'total_riwayat'    => $updated['total_riwayat'] ?? 0,
+                'message'          => 'Notifikasi dikembalikan ke daftar aktif.',
             ]);
         }
 

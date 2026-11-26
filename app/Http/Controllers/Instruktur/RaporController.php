@@ -56,14 +56,26 @@ class RaporController extends Controller
             ? round((float) $rapor['skor_akhir'] - (float) $raporSebelumnya['skor_akhir'], 2)
             : null;
 
+        $sampaiEnd = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
+        $dedupPesertaIds = AktivitasMengajar::query()
+            ->selectRaw('MAX(id)')
+            ->where('instruktur_id', $instruktur->id)
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
+            ->groupBy('jadwal_id', 'tanggal');
+
         $totalPesertaDilatih = (int) AktivitasMengajar::where('instruktur_id', $instruktur->id)
-            ->whereBetween('tanggal', [$dari, $sampai])
+            ->whereIn('id', $dedupPesertaIds)
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
             ->where('status_konfirmasi', 'dikonfirmasi')
+            ->where(function ($q) {
+                $q->whereNull('jadwal_id')
+                    ->orWhereHas('jadwal', fn ($jq) => $jq->where('status', '!=', 'dibatalkan'));
+            })
             ->sum('jumlah_peserta_hadir');
 
         $observasis = ObservasiSupervisor::with(['supervisor', 'jadwal'])
             ->where('instruktur_id', $instruktur->id)
-            ->whereBetween('tanggal', [$dari, $sampai])
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
             ->orderByDesc('tanggal')
             ->get();
 

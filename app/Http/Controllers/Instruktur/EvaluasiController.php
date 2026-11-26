@@ -46,6 +46,7 @@ class EvaluasiController extends Controller
                 'kode_evaluasi_id',
                 'jadwal_id',
                 'instruktur_id',
+                'materi_evaluasi',
                 'jawaban',
                 'total_nilai',
                 'komentar',
@@ -58,7 +59,8 @@ class EvaluasiController extends Controller
 
         $allFiltered     = (clone $baseQuery)->get(['total_nilai', 'jawaban']);
         $totalResponden  = $allFiltered->count();
-        $rataNilai100    = $totalResponden > 0 ? $allFiltered->avg('total_nilai') : null;
+        $scoredFiltered  = $allFiltered->whereNotNull('total_nilai');
+        $rataNilai100    = $scoredFiltered->isNotEmpty() ? round((float) $scoredFiltered->avg('total_nilai'), 2) : null;
         $indikatorLabels = Evaluasi::getIndikatorLabels();
 
         $sums   = [];

@@ -366,7 +366,7 @@
                         <span>Izin {{ $rekapAbsensi['izin'] }}</span>
                         <span class="text-red-700 dark:text-red-300">Tidak Hadir {{ $rekapAbsensi['tidak_hadir'] }}</span>
                         @if (($rekapAbsensi['belum_hadir_tanpa_catatan'] ?? 0) > 0)
-                            <span class="text-slate-600 dark:text-slate-300">Belum Dimulai {{ $rekapAbsensi['belum_hadir_tanpa_catatan'] }}</span>
+                            <span class="text-red-700 dark:text-red-300">Terlewat Tanpa Presensi {{ $rekapAbsensi['belum_hadir_tanpa_catatan'] }}</span>
                         @endif
                         @if (($rekapAbsensi['belum_checkout'] ?? 0) > 0)
                             <span class="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 font-semibold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">

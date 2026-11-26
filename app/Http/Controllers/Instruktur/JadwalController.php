@@ -66,7 +66,7 @@ class JadwalController extends Controller
         }
 
         $allInstrukturJadwals = Jadwal::with([
-            'instruktur',
+            'instruktur.cutis',
             'instrukturAsli',
             'instrukturPengganti',
             'kelas',
@@ -212,7 +212,16 @@ class JadwalController extends Controller
             ->when($dariAbsensi !== '', fn ($q) => $q->whereDate('tanggal', '>=', $dariAbsensi))
             ->when($sampaiAbsensi !== '', fn ($q) => $q->whereDate('tanggal', '<=', $sampaiAbsensi));
 
-        $allFilteredAbsensi = (clone $riwayatAbsensiQuery)->get(['status', 'tanggal', 'jam_checkin', 'jam_checkout']);
+        $allFilteredAbsensiRaw = (clone $riwayatAbsensiQuery)->get([
+            'id',
+            'instruktur_id',
+            'jadwal_id',
+            'status',
+            'tanggal',
+            'jam_checkin',
+            'jam_checkout',
+        ]);
+        $allFilteredAbsensi = $this->occurrenceService->filterValidAttendanceRecords($allFilteredAbsensiRaw);
         $totalTercatat      = $allFilteredAbsensi->count();
         $hadirTepatAbs      = $allFilteredAbsensi->where('status', 'hadir')->count();
         $terlambatAbs       = $allFilteredAbsensi->where('status', 'terlambat')->count();
@@ -239,9 +248,11 @@ class JadwalController extends Controller
             ->expandElapsedOccurrences($allInstrukturJadwals, $periodeDari, $periodeSampai)
             ->count();
 
-        $totalSesiPeriode        = max($totalTerjadwal, $totalTercatat);
-        $belumHadirTanpaCatatan  = max(0, $totalSesiPeriode - $totalTercatat);
-        $persenHadirAbs          = $totalSesiPeriode > 0
+        $belumHadirTanpaCatatan = $this->occurrenceService
+            ->getMissedAttendanceOccurrences($allInstrukturJadwals, $allFilteredAbsensi, $periodeDari, $periodeSampai)
+            ->count();
+        $totalSesiPeriode = $totalTercatat + $belumHadirTanpaCatatan;
+        $persenHadirAbs   = $totalSesiPeriode > 0
             ? round((($hadirTepatAbs + $terlambatAbs) / $totalSesiPeriode) * 100, 1)
             : 0.0;
 
@@ -442,29 +453,50 @@ class JadwalController extends Controller
             ? $jadwal->tanggal->toDateString()
             : ($validated['tanggal_sesi'] ?? today()->toDateString());
 
-        $absensi = Absensi::where('jadwal_id', $jadwal->id)
-            ->whereDate('tanggal', $tanggalSesi)
-            ->first();
-
-        if (!$absensi || $absensi->jam_checkin === null) {
-            return back()->with('error', 'Anda belum melakukan Check-in pada sesi kelas ini. Lakukan Check-in terlebih dahulu sebelum Check-out.');
-        }
-
-        if ($absensi->jam_checkout !== null) {
-            return back()->with('error', "Anda sudah melakukan Check-out untuk sesi kelas {$jadwal->nama_kelas} pada pukul {$absensi->jam_checkout}.");
-        }
-
         $hasKoordinat = isset($validated['latitude'], $validated['longitude'])
             && is_numeric($validated['latitude'])
             && is_numeric($validated['longitude']);
 
-        $sekarang    = now();
-        $jamCheckout = $sekarang->format('H:i');
+        $sekarang      = now();
+        $jamCheckout   = null;
+        $checkoutError = DB::transaction(function () use (
+            $jadwal,
+            $tanggalSesi,
+            $sekarang,
+            $hasKoordinat,
+            $validated,
+            &$jamCheckout
+        ): ?string {
+            Jadwal::whereKey($jadwal->id)->lockForUpdate()->first();
 
-        DB::transaction(function () use ($absensi, $jadwal, $jamCheckout, $sekarang, $hasKoordinat, $validated) {
+            $absensi = Absensi::where('jadwal_id', $jadwal->id)
+                ->whereDate('tanggal', $tanggalSesi)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $absensi || $absensi->jam_checkin === null) {
+                return 'Anda belum melakukan Check-in pada sesi kelas ini. Lakukan Check-in terlebih dahulu sebelum Check-out.';
+            }
+
+            if ($absensi->jam_checkout !== null) {
+                return "Anda sudah melakukan Check-out untuk sesi kelas {$jadwal->nama_kelas} pada pukul {$absensi->jam_checkout}.";
+            }
+
+            $jamCheckinStr = substr((string) $absensi->jam_checkin, 0, 5);
+            if ($tanggalSesi < $sekarang->toDateString()) {
+                $jamSelesaiJadwal = $jadwal->jam_selesai ? substr((string) $jadwal->jam_selesai, 0, 5) : $jamCheckinStr;
+                $jamCheckout      = $jamSelesaiJadwal >= $jamCheckinStr ? $jamSelesaiJadwal : $jamCheckinStr;
+                $checkoutAt       = Carbon::parse($tanggalSesi . ' ' . $jamCheckout);
+            } else {
+                $jamSekarang = $sekarang->format('H:i');
+                $jamCheckout = $jamSekarang >= $jamCheckinStr ? $jamSekarang : $jamCheckinStr;
+                $checkoutAt  = $sekarang;
+            }
+
             $updateData = [
-                'jam_checkout' => $jamCheckout,
-                'checkout_at'  => $sekarang,
+                'jam_checkout'     => $jamCheckout,
+                'checkout_at'      => $checkoutAt,
+                'is_auto_checkout' => false,
             ];
 
             if ($hasKoordinat) {
@@ -474,7 +506,7 @@ class JadwalController extends Controller
                 if (isset($validated['akurasi_gps']) && $validated['akurasi_gps'] !== '') {
                     $updateData['akurasi_gps'] = (float) $validated['akurasi_gps'];
                 }
-            } elseif (!$absensi->status_gps && !empty($validated['status_gps'])) {
+            } elseif (! $absensi->status_gps && ! empty($validated['status_gps'])) {
                 $updateData['status_gps'] = $validated['status_gps'];
             }
 
@@ -483,7 +515,13 @@ class JadwalController extends Controller
             if (! $jadwal->is_pola_mingguan && $jadwal->status !== 'dibatalkan') {
                 $jadwal->update(['status' => 'selesai']);
             }
+
+            return null;
         });
+
+        if ($checkoutError !== null) {
+            return back()->with('error', $checkoutError);
+        }
 
         return back()->with('success', "Check-out berhasil dicatat pada pukul {$jamCheckout} WIB untuk sesi kelas {$jadwal->nama_kelas}.");
     }

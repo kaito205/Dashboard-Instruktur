@@ -52,11 +52,12 @@ class DashboardController extends Controller
         $selectedStatus     = $request->filled('status') ? (string) $request->input('status') : 'all';
 
         [$dari, $sampai] = $this->getPeriodeRange($selectedPeriod, $request);
+        $sampaiEnd       = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
 
-        $baseAbsensiQuery = Absensi::whereBetween('tanggal', [$dari, $sampai]);
+        $baseAbsensiQuery = Absensi::whereBetween('tanggal', [$dari, $sampaiEnd]);
         $jadwalQuery      = Jadwal::periode($dari, $sampai);
         $evaluasiQuery    = Evaluasi::whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']);
-        $aktivitasQuery   = AktivitasMengajar::whereBetween('tanggal', [$dari, $sampai]);
+        $aktivitasQuery   = AktivitasMengajar::whereBetween('tanggal', [$dari, $sampaiEnd]);
 
         if ($selectedInstructor !== 'all' && $selectedInstructor !== '') {
             $baseAbsensiQuery->where('instruktur_id', $selectedInstructor);
@@ -86,11 +87,18 @@ class DashboardController extends Controller
         $totalJadwalSelesai     = $jadwalQuery->clone()->where('status', 'selesai')->count();
         $totalJadwalBatal       = $jadwalQuery->clone()->where('status', 'dibatalkan')->count();
 
-        $jadwalsAktifPeriode = Jadwal::with('instruktur')
-            ->where('status', '!=', 'dibatalkan')
-            ->periode($dari, $sampai)
-            ->when($selectedInstructor !== 'all' && $selectedInstructor !== '', fn ($q) => $q->where('instruktur_id', $selectedInstructor))
-            ->get();
+        $activeJadwalStatus = in_array($selectedStatus, ['terjadwal', 'berlangsung', 'selesai', 'dibatalkan'], true)
+            ? $selectedStatus
+            : null;
+
+        $jadwalsAktifPeriode = $activeJadwalStatus === 'dibatalkan'
+            ? collect()
+            : Jadwal::with('instruktur.cutis')
+                ->where('status', '!=', 'dibatalkan')
+                ->when($activeJadwalStatus !== null, fn ($q) => $q->where('status', $activeJadwalStatus))
+                ->periode($dari, $sampai)
+                ->when($selectedInstructor !== 'all' && $selectedInstructor !== '', fn ($q) => $q->where('instruktur_id', $selectedInstructor))
+                ->get();
 
         $absensisPeriodeRaw = $baseAbsensiQuery->clone()
             ->with('jadwal')
@@ -131,7 +139,7 @@ class DashboardController extends Controller
             : null;
 
         $totalEvaluasi     = $evaluasiQuery->clone()->count();
-        $avgTotalNilai     = $totalEvaluasi > 0 ? $evaluasiQuery->clone()->avg('total_nilai') : null;
+        $avgTotalNilai     = $evaluasiQuery->clone()->whereNotNull('total_nilai')->avg('total_nilai');
         $rataRataPenilaian = $avgTotalNilai !== null ? round((float) $avgTotalNilai, 2) : null;
 
         $allKinerja = $this->kinerjaService->evaluateAll($dari, $sampai, $selectedInstructor, $selectedStatus);
@@ -552,16 +560,21 @@ class DashboardController extends Controller
         string $dari,
         string $sampai
     ): array {
-        $occurrences = $this->occurrenceService->expandElapsedOccurrences(
-            $jadwalsAktifPeriode,
-            $dari,
-            $sampai,
-            Carbon::parse($sampai)->endOfDay()
-        );
+        $occurrences = $this->occurrenceService
+            ->expandElapsedOccurrences($jadwalsAktifPeriode, $dari, $sampai)
+            ->reject(fn (array $occ) => $occ['jadwal']->instruktur?->sedangCutiAtauIzinPada($occ['tanggal'], $occ['jadwal']->hari))
+            ->values();
 
         $confirmedActivities = $aktivitasQuery
             ->where('status_konfirmasi', 'dikonfirmasi')
-            ->get(['tanggal']);
+            ->where(function ($q) {
+                $q->whereNull('jadwal_id')
+                    ->orWhereHas('jadwal', fn ($jq) => $jq->where('status', '!=', 'dibatalkan'));
+            })
+            ->orderByDesc('id')
+            ->get(['id', 'instruktur_id', 'jadwal_id', 'tanggal'])
+            ->unique(fn ($item) => ($item->instruktur_id ?? '0') . '|' . ($item->jadwal_id ?? '0') . '|' . ($item->tanggal?->toDateString() ?? (string) $item->id))
+            ->values();
 
         $start = Carbon::parse($dari)->startOfDay();
         $end   = Carbon::parse($sampai)->startOfDay();

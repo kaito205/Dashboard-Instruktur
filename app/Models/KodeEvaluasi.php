@@ -45,13 +45,20 @@ class KodeEvaluasi extends Model
 
     public static function generateKode(?string $prefix = null): string
     {
-        if ($prefix && !self::where('kode', strtoupper(trim($prefix)))->exists()) {
-            return strtoupper(trim($prefix));
+        $cleanPrefix = $prefix !== null
+            ? preg_replace('/[^A-Z0-9._-]/', '', strtoupper(trim($prefix)))
+            : '';
+        $cleanPrefix = trim((string) $cleanPrefix, '-_.');
+
+        if ($cleanPrefix !== '' && strlen($cleanPrefix) <= 50 && ! self::where('kode', $cleanPrefix)->exists()) {
+            return $cleanPrefix;
         }
+
+        $base = $cleanPrefix !== '' ? substr($cleanPrefix, 0, 43) : 'EV';
 
         do {
             $pool = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-            $kode = ($prefix ? strtoupper(trim($prefix)) . '-' : 'EV-') . substr(str_shuffle(str_repeat($pool, 3)), 0, 6);
+            $kode = $base . '-' . substr(str_shuffle(str_repeat($pool, 3)), 0, 6);
         } while (self::where('kode', $kode)->exists());
 
         return $kode;
@@ -59,7 +66,7 @@ class KodeEvaluasi extends Model
 
     public function isValid(): bool
     {
-        if (!$this->is_active) {
+        if (! $this->is_active) {
             return false;
         }
         if ($this->expired_at && $this->expired_at->isPast()) {
@@ -68,6 +75,19 @@ class KodeEvaluasi extends Model
         if ($this->max_pengisian !== null && $this->jumlah_diisi >= $this->max_pengisian) {
             return false;
         }
+        if ($this->instruktur_id) {
+            $ins = $this->relationLoaded('instruktur') ? $this->instruktur : $this->instruktur()->first();
+            if (! $ins || $ins->trashed() || $ins->status !== 'aktif') {
+                return false;
+            }
+        }
+        if ($this->kelas_id) {
+            $kls = $this->relationLoaded('kelas') ? $this->kelas : $this->kelas()->first();
+            if ($kls && ($kls->trashed() || $kls->status === 'nonaktif')) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -85,37 +105,43 @@ class KodeEvaluasi extends Model
      */
     public function resolveSesiJadwal(): Collection
     {
-        $kodeUpper = strtoupper(trim($this->kode));
-        $namaKelas = $this->nama_kelas;
+        $kodeUpper  = strtoupper(trim($this->kode));
+        $namaKelas  = $this->nama_kelas;
         $kelasModel = $this->kelas_id ? $this->kelas()->first() : null;
 
         $jadwals = Jadwal::with('instruktur')
             ->where('status', '!=', 'dibatalkan')
+            ->whereHas('instruktur', fn ($iq) => $iq->whereNull('deleted_at')->where('status', 'aktif'))
             ->where(function ($q) use ($kodeUpper, $namaKelas, $kelasModel) {
                 if ($this->kelas_id) {
-                    $q->where('kelas_id', $this->kelas_id)
-                        ->orWhereRaw('UPPER(kode_kelas) = ?', [$kodeUpper])
-                        ->orWhereRaw('UPPER(nama_kelas) = ?', [$kodeUpper]);
-                } else {
-                    $q->whereRaw('UPPER(kode_kelas) = ?', [$kodeUpper])
-                        ->orWhereRaw('UPPER(nama_kelas) = ?', [$kodeUpper]);
+                    $q->where('kelas_id', $this->kelas_id);
+
+                    $legacyKodes = array_values(array_filter(array_unique([
+                        $kodeUpper,
+                        $kelasModel ? strtoupper(trim((string) $kelasModel->kode_kelas)) : '',
+                    ])));
+
+                    if ($legacyKodes !== []) {
+                        $q->orWhere(function ($sub) use ($legacyKodes) {
+                            $sub->whereNull('kelas_id')
+                                ->where(function ($kSub) use ($legacyKodes) {
+                                    foreach ($legacyKodes as $lk) {
+                                        $kSub->orWhereRaw('UPPER(kode_kelas) = ?', [$lk]);
+                                    }
+                                });
+                        });
+                    }
+                    return;
                 }
+
+                $q->whereRaw('UPPER(kode_kelas) = ?', [$kodeUpper])
+                    ->orWhereRaw('UPPER(nama_kelas) = ?', [$kodeUpper]);
 
                 if ($namaKelas) {
                     $q->orWhere('nama_kelas', $namaKelas);
                 }
-
-                if ($kelasModel) {
-                    $masterKodeUpper = strtoupper(trim((string) $kelasModel->kode_kelas));
-                    $masterNama = trim((string) $kelasModel->nama_kelas);
-                    if ($masterKodeUpper !== '') {
-                        $q->orWhereRaw('UPPER(kode_kelas) = ?', [$masterKodeUpper]);
-                    }
-                    if ($masterNama !== '') {
-                        $q->orWhere('nama_kelas', $masterNama);
-                    }
-                }
             })
+            ->when($this->instruktur_id, fn ($q) => $q->where('instruktur_id', $this->instruktur_id))
             ->orderByRaw('CASE WHEN is_pola_mingguan = 1 THEN 0 ELSE 1 END')
             ->orderBy('id')
             ->get();
@@ -124,6 +150,7 @@ class KodeEvaluasi extends Model
             $jadwals = Jadwal::with('instruktur')
                 ->where('instruktur_id', $this->instruktur_id)
                 ->where('status', '!=', 'dibatalkan')
+                ->whereHas('instruktur', fn ($iq) => $iq->whereNull('deleted_at')->where('status', 'aktif'))
                 ->orderByDesc('tanggal')
                 ->limit(10)
                 ->get();

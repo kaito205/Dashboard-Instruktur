@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Concerns\ResolvesAdminFilters;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\StoreJadwalRequest;
+use App\Models\Absensi;
 use App\Models\AktivitasMengajar;
 use App\Models\Instruktur;
 use App\Models\Jadwal;
@@ -17,6 +18,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class JadwalController extends Controller
 {
@@ -95,12 +97,11 @@ class JadwalController extends Controller
         $nowWib      = now('Asia/Jakarta');
 
         $filteredQuery = Jadwal::with([
-            'instruktur',
+            'instruktur.cutis',
             'instrukturAsli',
             'instrukturPengganti',
             'aktivitasMengajar',
             'kelas',
-            'absensis' => fn ($q) => $q->whereDate('tanggal', $todayWibStr),
         ])
             ->when($search !== '', fn ($q) => $q->where(function ($q) use ($search) {
                 $q->where('nama_kelas', 'like', "%{$search}%")
@@ -178,7 +179,48 @@ class JadwalController extends Controller
         $bukaSebelumMenit = max(0, (int) Setting::get('checkin_buka_sebelum_menit', '30'));
 
         $occurrenceService = new JadwalOccurrenceService();
-        $liveStatusMap     = [];
+        $pageItems         = $jadwals->getCollection();
+        $pageJadwalIds     = $pageItems->pluck('id')->filter()->values()->all();
+        $pageInstrukturIds = $pageItems->pluck('instruktur_id')->filter()->unique()->values()->all();
+        $pageDates         = $pageItems->pluck('tanggal')
+            ->filter()
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->push($todayWibStr)
+            ->unique()
+            ->values()
+            ->all();
+
+        $absensiByJadwalDate = [];
+        $absensiUmumByInstDate = [];
+        if ($pageInstrukturIds !== [] && $pageDates !== []) {
+            $pageAbsensis = Absensi::query()
+                ->whereIn('instruktur_id', $pageInstrukturIds)
+                ->whereIn('tanggal', $pageDates)
+                ->where(function ($q) use ($pageJadwalIds) {
+                    $q->whereNull('jadwal_id');
+                    if ($pageJadwalIds !== []) {
+                        $q->orWhereIn('jadwal_id', $pageJadwalIds);
+                    }
+                })
+                ->orderByDesc('id')
+                ->get();
+
+            foreach ($pageAbsensis as $absRow) {
+                $dKey = $absRow->tanggal?->toDateString();
+                if (! $dKey) {
+                    continue;
+                }
+                if ($absRow->jadwal_id !== null) {
+                    $k = $absRow->jadwal_id . '|' . $dKey;
+                    $absensiByJadwalDate[$k] = $absensiByJadwalDate[$k] ?? $absRow;
+                } else {
+                    $k = $absRow->instruktur_id . '|' . $dKey;
+                    $absensiUmumByInstDate[$k] = $absensiUmumByInstDate[$k] ?? $absRow;
+                }
+            }
+        }
+
+        $liveStatusMap = [];
         foreach ($jadwals as $j) {
             if ($j->status === 'dibatalkan') {
                 $liveStatusMap[$j->id] = [
@@ -191,7 +233,9 @@ class JadwalController extends Controller
 
             if ($j->is_pola_mingguan) {
                 if ($j->berlakuPadaTanggal($todayWibStr)) {
-                    $absenHariIni          = $j->absensis->first();
+                    $absenHariIni = $absensiByJadwalDate[$j->id . '|' . $todayWibStr]
+                        ?? $absensiUmumByInstDate[$j->instruktur_id . '|' . $todayWibStr]
+                        ?? null;
                     $liveStatusMap[$j->id] = $occurrenceService->resolveLiveSessionStatus($j, $todayWibStr, $absenHariIni, $nowWib);
                 } else {
                     $liveStatusMap[$j->id] = [
@@ -204,17 +248,22 @@ class JadwalController extends Controller
             }
 
             $tglJadwal = $j->tanggal?->toDateString();
+            $absenJadwal = $tglJadwal
+                ? ($absensiByJadwalDate[$j->id . '|' . $tglJadwal]
+                    ?? $absensiUmumByInstDate[$j->instruktur_id . '|' . $tglJadwal]
+                    ?? null)
+                : null;
+
             if ($tglJadwal === $todayWibStr) {
-                $absenHariIni          = $j->absensis->first();
-                $liveStatusMap[$j->id] = $occurrenceService->resolveLiveSessionStatus($j, $tglJadwal, $absenHariIni, $nowWib);
-            } elseif ($j->status === 'selesai') {
+                $liveStatusMap[$j->id] = $occurrenceService->resolveLiveSessionStatus($j, $tglJadwal, $absenJadwal, $nowWib);
+            } elseif ($j->status === 'selesai' && $absenJadwal === null) {
                 $liveStatusMap[$j->id] = [
                     'label' => 'Selesai',
                     'color' => 'emerald',
                     'code'  => 'selesai',
                 ];
             } elseif ($tglJadwal && $tglJadwal < $todayWibStr) {
-                $liveStatusMap[$j->id] = $occurrenceService->resolveLiveSessionStatus($j, $tglJadwal, null, $nowWib);
+                $liveStatusMap[$j->id] = $occurrenceService->resolveLiveSessionStatus($j, $tglJadwal, $absenJadwal, $nowWib);
             } else {
                 $liveStatusMap[$j->id] = [
                     'label' => $j->status_label,
@@ -270,9 +319,16 @@ class JadwalController extends Controller
         return view($this->viewPrefix . '.create', compact('instrukturs', 'kelasList', 'selectedKelasId', 'ruanganList'));
     }
 
-    private function validateJadwalAvailabilityAndConflicts(StoreJadwalRequest $request, ?int $ignoreJadwalId = null): array
-    {
-        $instruktur = Instruktur::find($request->instruktur_id);
+    private function validateJadwalAvailabilityAndConflicts(
+        StoreJadwalRequest $request,
+        ?int $ignoreJadwalId = null,
+        bool $lockRows = false
+    ): array {
+        $instrukturQuery = Instruktur::whereKey($request->instruktur_id);
+        if ($lockRows) {
+            $instrukturQuery->lockForUpdate();
+        }
+        $instruktur = $instrukturQuery->first();
         if (! $instruktur || $instruktur->status !== 'aktif') {
             return ['error' => ['instruktur_id' => 'Instruktur yang dipilih sedang berstatus nonaktif dan tidak dapat dijadwalkan.']];
         }
@@ -280,31 +336,34 @@ class JadwalController extends Controller
         $isPolaMingguan = (bool) $request->boolean('is_pola_mingguan');
         $tanggalCek     = $isPolaMingguan ? null : $request->input('tanggal');
         $hariCek        = $request->input('hari');
-        $periodeMulai   = $request->input('periode_mulai');
-        $periodeSelesai = $request->input('periode_selesai');
+        $periodeMulai   = $isPolaMingguan ? $request->input('periode_mulai') : null;
+        $periodeSelesai = $isPolaMingguan ? $request->input('periode_selesai') : null;
 
-        if ($instruktur->sedangCutiAtauIzinPada($tanggalCek, $hariCek, $periodeMulai, $periodeSelesai)) {
-            return ['error' => ['instruktur_id' => "Instruktur {$instruktur->nama_lengkap} sedang dalam masa {$instruktur->ketersediaan_label} dan tidak dapat dijadwalkan pada periode tersebut."]];
-        }
+        if ($request->input('status') !== 'dibatalkan') {
+            if ($instruktur->sedangCutiAtauIzinPada($tanggalCek, $hariCek, $periodeMulai, $periodeSelesai)) {
+                return ['error' => ['instruktur_id' => "Instruktur {$instruktur->nama_lengkap} sedang dalam masa {$instruktur->ketersediaan_label} dan tidak dapat dijadwalkan pada periode tersebut."]];
+            }
 
-        $konflik = $this->cekKonflikJadwal(
-            (int) $request->instruktur_id,
-            $tanggalCek,
-            $hariCek,
-            $isPolaMingguan,
-            $request->jam_mulai,
-            $request->jam_selesai,
-            $ignoreJadwalId,
-            $periodeMulai,
-            $periodeSelesai
-        );
+            $konflik = $this->cekKonflikJadwal(
+                (int) $request->instruktur_id,
+                $tanggalCek,
+                $hariCek,
+                $isPolaMingguan,
+                $request->jam_mulai,
+                $request->jam_selesai,
+                $ignoreJadwalId,
+                $periodeMulai,
+                $periodeSelesai,
+                $lockRows
+            );
 
-        if ($konflik) {
-            return ['error' => ['jam_mulai' => "Jadwal instruktur bertabrakan dengan kelas {$konflik->nama_kelas} (" . substr((string) $konflik->jam_mulai, 0, 5) . ' - ' . substr((string) $konflik->jam_selesai, 0, 5) . ').']];
+            if ($konflik) {
+                return ['error' => ['jam_mulai' => "Jadwal instruktur bertabrakan dengan kelas {$konflik->nama_kelas} (" . substr((string) $konflik->jam_mulai, 0, 5) . ' - ' . substr((string) $konflik->jam_selesai, 0, 5) . ').']];
+            }
         }
 
         $ruanganNorm = $this->normalisasiRuangan($request->input('ruangan'));
-        if ($ruanganNorm !== '') {
+        if ($ruanganNorm !== '' && $request->input('status') !== 'dibatalkan') {
             $konflikRuangan = $this->cekKonflikRuangan(
                 $ruanganNorm,
                 $tanggalCek,
@@ -314,7 +373,8 @@ class JadwalController extends Controller
                 $request->jam_selesai,
                 $ignoreJadwalId,
                 $periodeMulai,
-                $periodeSelesai
+                $periodeSelesai,
+                $lockRows
             );
 
             if ($konflikRuangan) {
@@ -333,19 +393,21 @@ class JadwalController extends Controller
     {
         $this->authorizeWriteJadwal();
 
-        $check = $this->validateJadwalAvailabilityAndConflicts($request);
-        if (! empty($check['error'])) {
-            return back()->withInput()->withErrors($check['error']);
-        }
-        $isPolaMingguan = $check['is_pola_mingguan'];
-        $ruanganNorm    = $check['ruangan'];
+        DB::transaction(function () use ($request) {
+            $check = $this->validateJadwalAvailabilityAndConflicts($request, null, true);
+            if (! empty($check['error'])) {
+                throw ValidationException::withMessages($check['error']);
+            }
+            $isPolaMingguan = $check['is_pola_mingguan'];
+            $ruanganNorm    = $check['ruangan'];
 
-        DB::transaction(function () use ($request, $ruanganNorm, $isPolaMingguan) {
             $validated = $request->validated();
             if ($isPolaMingguan) {
                 $validated['tanggal'] = null;
             } elseif (! empty($validated['tanggal'])) {
-                $validated['hari'] = Jadwal::hariDariTanggal($validated['tanggal']);
+                $validated['hari']            = Jadwal::hariDariTanggal($validated['tanggal']);
+                $validated['periode_mulai']   = null;
+                $validated['periode_selesai'] = null;
             }
             $validated['ruangan'] = $ruanganNorm !== '' ? $ruanganNorm : null;
             $validated = $this->resolveKelasData($validated);
@@ -355,7 +417,7 @@ class JadwalController extends Controller
 
             $jadwal = Jadwal::create($validated);
 
-            if ($jadwal->tanggal !== null) {
+            if ($jadwal->tanggal !== null && $jadwal->status !== 'dibatalkan') {
                 AktivitasMengajar::create([
                     'jadwal_id'          => $jadwal->id,
                     'instruktur_id'      => $jadwal->instruktur_id,
@@ -394,20 +456,24 @@ class JadwalController extends Controller
     {
         $this->authorizeWriteJadwal();
 
-        $check = $this->validateJadwalAvailabilityAndConflicts($request, $jadwal->id);
-        if (! empty($check['error'])) {
-            return back()->withInput()->withErrors($check['error']);
-        }
-        $isPolaMingguan = $check['is_pola_mingguan'];
-        $ruanganNorm    = $check['ruangan'];
+        DB::transaction(function () use ($request, $jadwal) {
+            Jadwal::whereKey($jadwal->id)->lockForUpdate()->first();
 
-        DB::transaction(function () use ($request, $jadwal, $ruanganNorm, $isPolaMingguan) {
+            $check = $this->validateJadwalAvailabilityAndConflicts($request, $jadwal->id, true);
+            if (! empty($check['error'])) {
+                throw ValidationException::withMessages($check['error']);
+            }
+            $isPolaMingguan = $check['is_pola_mingguan'];
+            $ruanganNorm    = $check['ruangan'];
+
             $materiJadwalLama = $jadwal->materi;
             $validated = $request->validated();
             if ($isPolaMingguan) {
                 $validated['tanggal'] = null;
             } elseif (! empty($validated['tanggal'])) {
-                $validated['hari'] = Jadwal::hariDariTanggal($validated['tanggal']);
+                $validated['hari']            = Jadwal::hariDariTanggal($validated['tanggal']);
+                $validated['periode_mulai']   = null;
+                $validated['periode_selesai'] = null;
             }
             $validated['ruangan'] = $ruanganNorm !== '' ? $ruanganNorm : null;
             $validated = $this->resolveKelasData($validated);
@@ -415,9 +481,27 @@ class JadwalController extends Controller
                 $validated['kode_kelas'] = substr(strtoupper(trim((string) $validated['nama_kelas'])), 0, 50);
             }
 
+            if ($jadwal->instruktur_asli_id && (int) $validated['instruktur_id'] === (int) $jadwal->instruktur_asli_id) {
+                $validated['instruktur_asli_id']      = null;
+                $validated['instruktur_pengganti_id'] = null;
+            }
+
             $jadwal->update($validated);
 
             if ($jadwal->tanggal === null) {
+                AktivitasMengajar::where('jadwal_id', $jadwal->id)
+                    ->where('status_konfirmasi', 'belum_dikonfirmasi')
+                    ->whereNull('confirmed_at')
+                    ->whereNull('jam_mulai_aktual')
+                    ->whereNull('jumlah_peserta_hadir')
+                    ->delete();
+                return;
+            }
+
+            if ($jadwal->status === 'dibatalkan') {
+                AktivitasMengajar::where('jadwal_id', $jadwal->id)
+                    ->where('status_konfirmasi', 'belum_dikonfirmasi')
+                    ->update(['status_konfirmasi' => 'tidak_terlaksana']);
                 return;
             }
 
@@ -457,7 +541,7 @@ class JadwalController extends Controller
             ->with('success', 'Jadwal mengajar berhasil diperbarui.');
     }
 
-    // Mengalihkan atau menyesuaikan jadwal (instruktur, ruangan, hari/tanggal, atau jam mengajar) dengan validasi bentrok dan riwayat pengalihan.
+    // Mengalihkan atau menyesuaikan jadwal dengan validasi bentrok, penguncian transaksi, serta pelestarian histori sesi mingguan masa lalu.
     public function alihkan(Request $request, Jadwal $jadwal)
     {
         $this->authorizeWriteJadwal();
@@ -468,10 +552,8 @@ class JadwalController extends Controller
             ]);
         }
 
-        $isPolaMingguan = (bool) $jadwal->is_pola_mingguan;
-
         $validated = $request->validate([
-            'instruktur_pengganti_id' => ['nullable', 'integer', 'exists:instrukturs,id'],
+            'instruktur_pengganti_id' => ['nullable', 'integer', Rule::exists('instrukturs', 'id')->whereNull('deleted_at')],
             'ruangan'                 => ['nullable', 'string', 'max:100'],
             'hari'                    => ['nullable', Rule::in(Jadwal::DAFTAR_HARI)],
             'tanggal'                 => ['nullable', 'date'],
@@ -487,147 +569,246 @@ class JadwalController extends Controller
             'alasan_pengalihan.required'     => 'Alasan pengalihan jadwal wajib diisi.',
         ]);
 
-        $lamaInstruktur = $jadwal->instruktur;
-        $targetInstrukturId = ! empty($validated['instruktur_pengganti_id'])
-            ? (int) $validated['instruktur_pengganti_id']
-            : (int) $jadwal->instruktur_id;
-        $targetInstruktur = $targetInstrukturId === (int) $jadwal->instruktur_id && $lamaInstruktur
-            ? $lamaInstruktur
-            : Instruktur::findOrFail($targetInstrukturId);
-
-        $lamaRuangan = $this->normalisasiRuangan($jadwal->ruangan);
-        $targetRuangan = filled($validated['ruangan'] ?? null)
-            ? $this->normalisasiRuangan($validated['ruangan'])
-            : $lamaRuangan;
-
-        $lamaTanggal = $jadwal->tanggal?->toDateString();
-        $targetTanggal = ! $isPolaMingguan && filled($validated['tanggal'] ?? null)
-            ? Carbon::parse($validated['tanggal'])->toDateString()
-            : $lamaTanggal;
-
-        $lamaHari = $jadwal->hari;
-        if ($isPolaMingguan) {
-            $targetHari = filled($validated['hari'] ?? null) ? $validated['hari'] : $lamaHari;
-        } else {
-            $targetHari = $targetTanggal ? Jadwal::hariDariTanggal($targetTanggal) : $lamaHari;
-        }
-
-        $lamaJamMulai = substr((string) $jadwal->jam_mulai, 0, 5);
-        $lamaJamSelesai = substr((string) $jadwal->jam_selesai, 0, 5);
-        $targetJamMulai = filled($validated['jam_mulai'] ?? null) ? $validated['jam_mulai'] : $lamaJamMulai;
-        $targetJamSelesai = filled($validated['jam_selesai'] ?? null) ? $validated['jam_selesai'] : $lamaJamSelesai;
-
-        if ($targetJamSelesai <= $targetJamMulai) {
-            return back()->withErrors([
-                'jam_selesai' => 'Jam selesai harus lebih besar dari jam mulai.',
-            ]);
-        }
-
-        $instrukturBerubah = $targetInstruktur->id !== (int) $jadwal->instruktur_id;
-        $ruanganBerubah = $targetRuangan !== $lamaRuangan;
-        $waktuBerubah = $targetJamMulai !== $lamaJamMulai || $targetJamSelesai !== $lamaJamSelesai;
-        $hariAtauTanggalBerubah = $isPolaMingguan
-            ? ($targetHari !== $lamaHari)
-            : ($targetTanggal !== $lamaTanggal);
-
         $daftarPerubahan = [];
-        if ($instrukturBerubah) {
-            $namaLama = $lamaInstruktur?->nama_lengkap ?? '-';
-            $daftarPerubahan[] = "Instruktur: {$namaLama} -> {$targetInstruktur->nama_lengkap}";
-        }
-        if ($ruanganBerubah) {
-            $ruanganLamaLabel = $lamaRuangan !== '' ? $lamaRuangan : '-';
-            $ruanganBaruLabel = $targetRuangan !== '' ? $targetRuangan : '-';
-            $daftarPerubahan[] = "Ruangan: {$ruanganLamaLabel} -> {$ruanganBaruLabel}";
-        }
-        if ($hariAtauTanggalBerubah) {
-            if ($isPolaMingguan) {
-                $daftarPerubahan[] = "Hari: {$lamaHari} -> {$targetHari}";
-            } else {
-                $tglLamaLabel = $lamaTanggal ? Carbon::parse($lamaTanggal)->format('d/m/Y') : '-';
-                $tglBaruLabel = $targetTanggal ? Carbon::parse($targetTanggal)->format('d/m/Y') : '-';
-                $daftarPerubahan[] = "Tanggal: {$tglLamaLabel} -> {$tglBaruLabel}";
+
+        DB::transaction(function () use ($jadwal, $validated, &$daftarPerubahan) {
+            $jadwalLocked = Jadwal::whereKey($jadwal->id)->lockForUpdate()->firstOrFail();
+            if (in_array($jadwalLocked->status, ['selesai', 'dibatalkan'], true)) {
+                throw ValidationException::withMessages([
+                    'alasan_pengalihan' => "Jadwal yang sudah berstatus {$jadwalLocked->status_label} tidak dapat dialihkan.",
+                ]);
             }
-        }
-        if ($waktuBerubah) {
-            $daftarPerubahan[] = "Jam: {$lamaJamMulai}-{$lamaJamSelesai} -> {$targetJamMulai}-{$targetJamSelesai}";
-        }
 
-        if ($daftarPerubahan === []) {
-            return back()->withErrors([
-                'alasan_pengalihan' => 'Belum ada perubahan jadwal yang dipilih. Ubah minimal salah satu dari instruktur, ruangan, hari/tanggal, atau jam mengajar.',
-            ]);
-        }
+            $isPolaMingguan = (bool) $jadwalLocked->is_pola_mingguan;
+            $lamaInstruktur = $jadwalLocked->instruktur;
+            $targetInstrukturId = ! empty($validated['instruktur_pengganti_id'])
+                ? (int) $validated['instruktur_pengganti_id']
+                : (int) $jadwalLocked->instruktur_id;
 
-        $tanggalCek     = $isPolaMingguan ? null : $targetTanggal;
-        $periodeMulai   = $jadwal->periode_mulai?->toDateString();
-        $periodeSelesai = $jadwal->periode_selesai?->toDateString();
+            $targetInstruktur = Instruktur::whereKey($targetInstrukturId)->lockForUpdate()->first();
+            if (! $targetInstruktur) {
+                throw ValidationException::withMessages([
+                    'instruktur_pengganti_id' => 'Instruktur yang dipilih tidak ditemukan.',
+                ]);
+            }
 
-        if ($targetInstruktur->status !== 'aktif' || $targetInstruktur->sedangCutiAtauIzinPada($tanggalCek, $targetHari, $periodeMulai, $periodeSelesai)) {
-            return back()->withErrors([
-                'instruktur_pengganti_id' => "Instruktur ({$targetInstruktur->nama_lengkap}) sedang berhalangan/cuti atau nonaktif.",
-            ]);
-        }
+            $lamaRuangan = $this->normalisasiRuangan($jadwalLocked->ruangan);
+            $targetRuangan = filled($validated['ruangan'] ?? null)
+                ? $this->normalisasiRuangan($validated['ruangan'])
+                : $lamaRuangan;
 
-        $konflikInstruktur = $this->cekKonflikJadwal(
-            $targetInstruktur->id,
-            $tanggalCek,
-            $targetHari,
-            $isPolaMingguan,
-            $targetJamMulai,
-            $targetJamSelesai,
-            $jadwal->id,
-            $periodeMulai,
-            $periodeSelesai
-        );
+            $lamaTanggal = $jadwalLocked->tanggal?->toDateString();
+            $targetTanggal = ! $isPolaMingguan && filled($validated['tanggal'] ?? null)
+                ? Carbon::parse($validated['tanggal'])->toDateString()
+                : $lamaTanggal;
 
-        if ($konflikInstruktur) {
-            return back()->withErrors([
-                'instruktur_pengganti_id' => "Jadwal instruktur ({$targetInstruktur->nama_lengkap}) bentrok dengan kelas {$konflikInstruktur->nama_kelas} (" . substr((string) $konflikInstruktur->jam_mulai, 0, 5) . ' - ' . substr((string) $konflikInstruktur->jam_selesai, 0, 5) . ').',
-            ]);
-        }
+            $lamaHari = $jadwalLocked->hari;
+            if ($isPolaMingguan) {
+                $targetHari = filled($validated['hari'] ?? null) ? $validated['hari'] : $lamaHari;
+            } else {
+                $targetHari = $targetTanggal ? Jadwal::hariDariTanggal($targetTanggal) : $lamaHari;
+            }
 
-        if ($targetRuangan !== '') {
-            $konflikRuangan = $this->cekKonflikRuangan(
-                $targetRuangan,
+            $lamaJamMulai     = substr((string) $jadwalLocked->jam_mulai, 0, 5);
+            $lamaJamSelesai   = substr((string) $jadwalLocked->jam_selesai, 0, 5);
+            $targetJamMulai   = filled($validated['jam_mulai'] ?? null) ? $validated['jam_mulai'] : $lamaJamMulai;
+            $targetJamSelesai = filled($validated['jam_selesai'] ?? null) ? $validated['jam_selesai'] : $lamaJamSelesai;
+
+            if ($targetJamSelesai <= $targetJamMulai) {
+                throw ValidationException::withMessages([
+                    'jam_selesai' => 'Jam selesai harus lebih besar dari jam mulai.',
+                ]);
+            }
+
+            $instrukturBerubah      = $targetInstruktur->id !== (int) $jadwalLocked->instruktur_id;
+            $ruanganBerubah         = $targetRuangan !== $lamaRuangan;
+            $waktuBerubah           = $targetJamMulai !== $lamaJamMulai || $targetJamSelesai !== $lamaJamSelesai;
+            $hariAtauTanggalBerubah = $isPolaMingguan
+                ? ($targetHari !== $lamaHari)
+                : ($targetTanggal !== $lamaTanggal);
+
+            if ($instrukturBerubah) {
+                $namaLama = $lamaInstruktur?->nama_lengkap ?? '-';
+                $daftarPerubahan[] = "Instruktur: {$namaLama} -> {$targetInstruktur->nama_lengkap}";
+            }
+            if ($ruanganBerubah) {
+                $ruanganLamaLabel  = $lamaRuangan !== '' ? $lamaRuangan : '-';
+                $ruanganBaruLabel  = $targetRuangan !== '' ? $targetRuangan : '-';
+                $daftarPerubahan[] = "Ruangan: {$ruanganLamaLabel} -> {$ruanganBaruLabel}";
+            }
+            if ($hariAtauTanggalBerubah) {
+                if ($isPolaMingguan) {
+                    $daftarPerubahan[] = "Hari: {$lamaHari} -> {$targetHari}";
+                } else {
+                    $tglLamaLabel      = $lamaTanggal ? Carbon::parse($lamaTanggal)->format('d/m/Y') : '-';
+                    $tglBaruLabel      = $targetTanggal ? Carbon::parse($targetTanggal)->format('d/m/Y') : '-';
+                    $daftarPerubahan[] = "Tanggal: {$tglLamaLabel} -> {$tglBaruLabel}";
+                }
+            }
+            if ($waktuBerubah) {
+                $daftarPerubahan[] = "Jam: {$lamaJamMulai}-{$lamaJamSelesai} -> {$targetJamMulai}-{$targetJamSelesai}";
+            }
+
+            if ($daftarPerubahan === []) {
+                throw ValidationException::withMessages([
+                    'alasan_pengalihan' => 'Belum ada perubahan jadwal yang dipilih. Ubah minimal salah satu dari instruktur, ruangan, hari/tanggal, atau jam mengajar.',
+                ]);
+            }
+
+            $todayStr       = today()->toDateString();
+            $yesterdayStr   = today()->subDay()->toDateString();
+            $periodeMulai   = $jadwalLocked->periode_mulai?->toDateString();
+            $periodeSelesai = $jadwalLocked->periode_selesai?->toDateString();
+
+            if ($isPolaMingguan && $periodeSelesai !== null && $periodeSelesai < $todayStr) {
+                throw ValidationException::withMessages([
+                    'alasan_pengalihan' => 'Periode jadwal berulang ini sudah berakhir dan tidak dapat dialihkan.',
+                ]);
+            }
+
+            if (! $isPolaMingguan && ($instrukturBerubah || $hariAtauTanggalBerubah)) {
+                $sudahCheckin = Absensi::where('jadwal_id', $jadwalLocked->id)
+                    ->whereNotNull('jam_checkin')
+                    ->lockForUpdate()
+                    ->exists();
+
+                if ($sudahCheckin) {
+                    throw ValidationException::withMessages([
+                        'alasan_pengalihan' => 'Jadwal sesi ini sudah memiliki rekaman Check-in presensi sehingga tidak dapat diganti instruktur atau tanggalnya.',
+                    ]);
+                }
+            }
+
+            $perluSplitPeriode = false;
+            if ($isPolaMingguan && ($instrukturBerubah || $hariAtauTanggalBerubah || $waktuBerubah)) {
+                if ($periodeMulai === null) {
+                    $perluSplitPeriode = true;
+                } elseif ($periodeMulai < $todayStr) {
+                    $perluSplitPeriode = $this->polaMemilikiSesiSebelumTanggal($lamaHari, $periodeMulai, $yesterdayStr)
+                        || $jadwalLocked->absensis()->whereDate('tanggal', '<', $todayStr)->exists()
+                        || $jadwalLocked->aktivitasMengajars()->whereDate('tanggal', '<', $todayStr)->exists();
+                }
+            }
+
+            $tanggalCek            = $isPolaMingguan ? null : $targetTanggal;
+            $effectivePeriodeMulai = $perluSplitPeriode ? $todayStr : $periodeMulai;
+
+            if ($targetInstruktur->status !== 'aktif' || $targetInstruktur->sedangCutiAtauIzinPada($tanggalCek, $targetHari, $effectivePeriodeMulai, $periodeSelesai)) {
+                throw ValidationException::withMessages([
+                    'instruktur_pengganti_id' => "Instruktur ({$targetInstruktur->nama_lengkap}) sedang berhalangan/cuti atau nonaktif.",
+                ]);
+            }
+
+            $konflikInstruktur = $this->cekKonflikJadwal(
+                $targetInstruktur->id,
                 $tanggalCek,
                 $targetHari,
                 $isPolaMingguan,
                 $targetJamMulai,
                 $targetJamSelesai,
-                $jadwal->id,
-                $periodeMulai,
-                $periodeSelesai
+                $jadwalLocked->id,
+                $effectivePeriodeMulai,
+                $periodeSelesai,
+                true
             );
 
-            if ($konflikRuangan) {
-                return back()->withErrors([
-                    'ruangan' => "Ruangan {$targetRuangan} sudah digunakan oleh kelas {$konflikRuangan->nama_kelas} (" . substr((string) $konflikRuangan->jam_mulai, 0, 5) . ' - ' . substr((string) $konflikRuangan->jam_selesai, 0, 5) . ').',
+            if ($konflikInstruktur) {
+                throw ValidationException::withMessages([
+                    'instruktur_pengganti_id' => "Jadwal instruktur ({$targetInstruktur->nama_lengkap}) bentrok dengan kelas {$konflikInstruktur->nama_kelas} (" . substr((string) $konflikInstruktur->jam_mulai, 0, 5) . ' - ' . substr((string) $konflikInstruktur->jam_selesai, 0, 5) . ').',
                 ]);
             }
-        }
 
-        DB::transaction(function () use (
-            $jadwal,
-            $targetInstruktur,
-            $instrukturBerubah,
-            $targetRuangan,
-            $targetHari,
-            $targetTanggal,
-            $isPolaMingguan,
-            $targetJamMulai,
-            $targetJamSelesai,
-            $validated,
-            $daftarPerubahan
-        ) {
+            if ($targetRuangan !== '') {
+                $konflikRuangan = $this->cekKonflikRuangan(
+                    $targetRuangan,
+                    $tanggalCek,
+                    $targetHari,
+                    $isPolaMingguan,
+                    $targetJamMulai,
+                    $targetJamSelesai,
+                    $jadwalLocked->id,
+                    $effectivePeriodeMulai,
+                    $periodeSelesai,
+                    true
+                );
+
+                if ($konflikRuangan) {
+                    throw ValidationException::withMessages([
+                        'ruangan' => "Ruangan {$targetRuangan} sudah digunakan oleh kelas {$konflikRuangan->nama_kelas} (" . substr((string) $konflikRuangan->jam_mulai, 0, 5) . ' - ' . substr((string) $konflikRuangan->jam_selesai, 0, 5) . ').',
+                    ]);
+                }
+            }
+
+            $riwayat = is_array($jadwalLocked->riwayat_pengalihan) ? $jadwalLocked->riwayat_pengalihan : [];
+            $riwayat[] = [
+                'waktu'     => now()->format('d/m/Y H:i'),
+                'oleh'      => auth()->user()?->name ?? 'Admin',
+                'alasan'    => $validated['alasan_pengalihan'],
+                'perubahan' => $daftarPerubahan,
+            ];
+
+            $asliId      = $jadwalLocked->instruktur_asli_id ?: $jadwalLocked->instruktur_id;
+            $isRevertAsli = $instrukturBerubah && (int) $targetInstruktur->id === (int) $asliId;
+
+            if ($perluSplitPeriode) {
+                $jadwalLocked->update([
+                    'periode_selesai'    => $yesterdayStr,
+                    'riwayat_pengalihan' => $riwayat,
+                ]);
+
+                $jadwalBaru = Jadwal::create([
+                    'instruktur_id'           => $targetInstruktur->id,
+                    'instruktur_asli_id'      => $instrukturBerubah ? ($isRevertAsli ? null : $asliId) : $jadwalLocked->instruktur_asli_id,
+                    'instruktur_pengganti_id' => $instrukturBerubah ? ($isRevertAsli ? null : $targetInstruktur->id) : $jadwalLocked->instruktur_pengganti_id,
+                    'kelas_id'                => $jadwalLocked->kelas_id,
+                    'kode_kelas'              => $jadwalLocked->kode_kelas,
+                    'nama_kelas'              => $jadwalLocked->nama_kelas,
+                    'materi'                  => $jadwalLocked->materi,
+                    'hari'                    => $targetHari,
+                    'tanggal'                 => null,
+                    'is_pola_mingguan'        => true,
+                    'periode_mulai'           => $todayStr,
+                    'periode_selesai'         => $periodeSelesai,
+                    'jam_mulai'               => $targetJamMulai,
+                    'jam_selesai'             => $targetJamSelesai,
+                    'ruangan'                 => $targetRuangan !== '' ? $targetRuangan : null,
+                    'jumlah_peserta'          => $jadwalLocked->jumlah_peserta,
+                    'status'                  => 'terjadwal',
+                    'keterangan'              => $jadwalLocked->keterangan,
+                    'alasan_pengalihan'       => $validated['alasan_pengalihan'],
+                    'riwayat_pengalihan'      => $riwayat,
+                    'dialihkan_pada'          => now(),
+                ]);
+
+                AktivitasMengajar::where('jadwal_id', $jadwalLocked->id)
+                    ->whereDate('tanggal', '>=', $todayStr)
+                    ->where('status_konfirmasi', 'belum_dikonfirmasi')
+                    ->update([
+                        'jadwal_id'     => $jadwalBaru->id,
+                        'instruktur_id' => $targetInstruktur->id,
+                    ]);
+
+                Absensi::where('jadwal_id', $jadwalLocked->id)
+                    ->whereDate('tanggal', '>=', $todayStr)
+                    ->whereNull('jam_checkin')
+                    ->update([
+                        'jadwal_id'        => $jadwalBaru->id,
+                        'instruktur_id'    => $targetInstruktur->id,
+                        'jam_mulai_jadwal' => $targetJamMulai,
+                    ]);
+
+                return;
+            }
+
             $payload = [
-                'instruktur_id'     => $targetInstruktur->id,
-                'ruangan'           => $targetRuangan !== '' ? $targetRuangan : null,
-                'hari'              => $targetHari,
-                'jam_mulai'         => $targetJamMulai,
-                'jam_selesai'       => $targetJamSelesai,
-                'alasan_pengalihan' => $validated['alasan_pengalihan'],
-                'dialihkan_pada'    => now(),
+                'instruktur_id'      => $targetInstruktur->id,
+                'ruangan'            => $targetRuangan !== '' ? $targetRuangan : null,
+                'hari'               => $targetHari,
+                'jam_mulai'          => $targetJamMulai,
+                'jam_selesai'        => $targetJamSelesai,
+                'alasan_pengalihan'  => $validated['alasan_pengalihan'],
+                'dialihkan_pada'     => now(),
+                'riwayat_pengalihan' => $riwayat,
             ];
 
             if (! $isPolaMingguan && $targetTanggal) {
@@ -635,22 +816,18 @@ class JadwalController extends Controller
             }
 
             if ($instrukturBerubah) {
-                $payload['instruktur_asli_id'] = $jadwal->instruktur_asli_id ?: $jadwal->instruktur_id;
-                $payload['instruktur_pengganti_id'] = $targetInstruktur->id;
+                if ($isRevertAsli) {
+                    $payload['instruktur_asli_id']      = null;
+                    $payload['instruktur_pengganti_id'] = null;
+                } else {
+                    $payload['instruktur_asli_id']      = $asliId;
+                    $payload['instruktur_pengganti_id'] = $targetInstruktur->id;
+                }
             }
 
-            $riwayat = is_array($jadwal->riwayat_pengalihan) ? $jadwal->riwayat_pengalihan : [];
-            $riwayat[] = [
-                'waktu'     => now()->format('d/m/Y H:i'),
-                'oleh'      => auth()->user()?->name ?? 'Admin',
-                'alasan'    => $validated['alasan_pengalihan'],
-                'perubahan' => $daftarPerubahan,
-            ];
-            $payload['riwayat_pengalihan'] = $riwayat;
+            $jadwalLocked->update($payload);
 
-            $jadwal->update($payload);
-
-            $aktivitas = AktivitasMengajar::where('jadwal_id', $jadwal->id)
+            $aktivitas = AktivitasMengajar::where('jadwal_id', $jadwalLocked->id)
                 ->where('status_konfirmasi', 'belum_dikonfirmasi')
                 ->first();
 
@@ -666,11 +843,57 @@ class JadwalController extends Controller
                     $aktivitas->update($aktivitasUpdate);
                 }
             }
+
+            if (! $isPolaMingguan) {
+                $absensisJadwal = Absensi::where('jadwal_id', $jadwalLocked->id)
+                    ->lockForUpdate()
+                    ->get();
+
+                foreach ($absensisJadwal as $absRow) {
+                    $absUpdate = ['jam_mulai_jadwal' => $targetJamMulai];
+                    if ($absRow->jam_checkin === null) {
+                        if ($instrukturBerubah) {
+                            $absUpdate['instruktur_id'] = $targetInstruktur->id;
+                        }
+                        if ($targetTanggal) {
+                            $absUpdate['tanggal'] = $targetTanggal;
+                        }
+                    } elseif ($waktuBerubah && in_array($absRow->status, ['hadir', 'terlambat'], true)) {
+                        $kalk = Absensi::hitungKeterlambatan($targetJamMulai, substr((string) $absRow->jam_checkin, 0, 5));
+                        $absUpdate['menit_terlambat'] = $kalk['menit_terlambat'];
+                        $absUpdate['status']          = $kalk['status'];
+                    }
+                    $absRow->update($absUpdate);
+                }
+            }
         });
 
         $ringkasan = implode(', ', $daftarPerubahan);
 
         return back()->with('success', "Jadwal kelas {$jadwal->nama_kelas} berhasil dialihkan/disesuaikan ({$ringkasan}).");
+    }
+
+    private function polaMemilikiSesiSebelumTanggal(?string $hari, string $dari, string $sampai): bool
+    {
+        if (! $hari || $sampai < $dari) {
+            return false;
+        }
+
+        $cursor = Carbon::parse($dari)->startOfDay();
+        $end    = Carbon::parse($sampai)->startOfDay();
+        $limit  = $cursor->copy()->addDays(6);
+        if ($end->lt($limit)) {
+            $limit = $end;
+        }
+
+        while ($cursor->lte($limit)) {
+            if (Jadwal::hariDariTanggal($cursor) === $hari) {
+                return true;
+            }
+            $cursor->addDay();
+        }
+
+        return false;
     }
 
     public function batalkan(Request $request, Jadwal $jadwal)
@@ -752,14 +975,20 @@ class JadwalController extends Controller
         string $jamSelesai,
         ?int $excludeId = null,
         ?string $periodeMulai = null,
-        ?string $periodeSelesai = null
+        ?string $periodeSelesai = null,
+        bool $lockRows = false
     ): ?Jadwal {
-        $candidates = Jadwal::query()
+        $query = Jadwal::query()
             ->where('instruktur_id', $instrukturId)
             ->where('status', '!=', 'dibatalkan')
             ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+
+        if ($lockRows) {
+            $query->lockForUpdate();
+        }
+
+        $candidates = $query->get();
 
         return $candidates->first(function (Jadwal $existing) use (
             $tanggal,
@@ -792,20 +1021,26 @@ class JadwalController extends Controller
         string $jamSelesai,
         ?int $excludeId = null,
         ?string $periodeMulai = null,
-        ?string $periodeSelesai = null
+        ?string $periodeSelesai = null,
+        bool $lockRows = false
     ): ?Jadwal {
         $targetRoom = strtoupper($this->normalisasiRuangan($ruangan));
         if ($targetRoom === '') {
             return null;
         }
 
-        $candidates = Jadwal::query()
+        $query = Jadwal::query()
             ->whereNotNull('ruangan')
             ->where('ruangan', '!=', '')
             ->where('status', '!=', 'dibatalkan')
             ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+
+        if ($lockRows) {
+            $query->lockForUpdate();
+        }
+
+        $candidates = $query->get();
 
         return $candidates->first(function (Jadwal $existing) use (
             $targetRoom,
@@ -993,24 +1228,24 @@ class JadwalController extends Controller
         $kodeUpper = ! empty($validated['kode_kelas']) ? strtoupper(trim((string) $validated['kode_kelas'])) : '';
         $namaLower = ! empty($validated['nama_kelas']) ? mb_strtolower(trim((string) $validated['nama_kelas'])) : '';
 
-        if ($kodeUpper !== '' || $namaLower !== '') {
+        if ($kodeUpper !== '') {
             $matched = Kelas::query()
-                ->where(function ($q) use ($kodeUpper, $namaLower) {
-                    if ($kodeUpper !== '') {
-                        $q->whereRaw('UPPER(kode_kelas) = ?', [$kodeUpper]);
-                    }
-                    if ($namaLower !== '') {
-                        if ($kodeUpper !== '') {
-                            $q->orWhereRaw('LOWER(nama_kelas) = ?', [$namaLower]);
-                        } else {
-                            $q->whereRaw('LOWER(nama_kelas) = ?', [$namaLower]);
-                        }
-                    }
-                })
+                ->whereRaw('UPPER(kode_kelas) = ?', [$kodeUpper])
                 ->first();
 
             if ($matched) {
                 $validated['kelas_id'] = $matched->id;
+            }
+        } elseif ($namaLower !== '') {
+            $matched = Kelas::query()
+                ->whereRaw('LOWER(nama_kelas) = ?', [$namaLower])
+                ->first();
+
+            if ($matched) {
+                $validated['kelas_id'] = $matched->id;
+                if (empty($validated['kode_kelas'])) {
+                    $validated['kode_kelas'] = $matched->kode_kelas;
+                }
             }
         }
 

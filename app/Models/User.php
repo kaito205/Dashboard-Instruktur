@@ -42,6 +42,12 @@ class User extends Authenticatable
 
     protected static function booted(): void
     {
+        static::saving(function (User $user) {
+            if (! empty($user->email)) {
+                $user->email = mb_strtolower(trim((string) $user->email));
+            }
+        });
+
         // Sinkronisasi otomatis perubahan akun instruktur ke tabel instrukturs
         static::saved(function (User $user) {
             if (! $user->is_active) {
@@ -54,7 +60,11 @@ class User extends Authenticatable
                     ->first();
 
                 if ($instruktur) {
-                    if ($instruktur->trashed() && $user->is_active) {
+                    $wasTrashed = $instruktur->trashed();
+                    $oldStatus  = $instruktur->status;
+                    $newStatus  = $user->is_active ? 'aktif' : 'nonaktif';
+
+                    if ($wasTrashed && $user->is_active) {
                         $instruktur->restore();
                     }
 
@@ -62,20 +72,44 @@ class User extends Authenticatable
                         'user_id'      => $user->id,
                         'nama_lengkap' => $user->name,
                         'email'        => $user->email,
-                        'status'       => $user->is_active ? 'aktif' : 'nonaktif',
+                        'status'       => $newStatus,
                     ];
                     if (! empty($user->foto_profil)) {
                         $payload['foto_profil'] = $user->foto_profil;
                     }
                     $instruktur->updateQuietly($payload);
+
+                    if (($wasTrashed && $user->is_active) || $oldStatus !== $newStatus) {
+                        InstrukturAuditLog::create([
+                            'instruktur_id'       => $instruktur->id,
+                            'user_id'             => auth()->id(),
+                            'aksi'                => 'status_diubah',
+                            'ringkasan_perubahan' => $wasTrashed && $user->is_active
+                                ? "Profil instruktur {$instruktur->nama_lengkap} dipulihkan dari arsip karena akun login diaktifkan."
+                                : "Status instruktur disinkronkan dari status akun login ({$oldStatus} menjadi {$newStatus}).",
+                            'data_lama'           => ['status' => $oldStatus, 'deleted_at' => $wasTrashed ? 'trashed' : null],
+                            'data_baru'           => ['status' => $newStatus, 'deleted_at' => $instruktur->trashed() ? 'trashed' : null],
+                        ]);
+                    }
                 }
             }
         });
 
         // Lindungi histori operasional saat akun user instruktur dihapus
         static::deleting(function (User $user) {
+            $userFoto = $user->foto_profil;
             $instruktur = Instruktur::withTrashed()->where('user_id', $user->id)->first();
             if (! $instruktur) {
+                if (! empty($userFoto)) {
+                    DB::afterCommit(function () use ($userFoto, $user) {
+                        $stillUsed = User::where('id', '!=', $user->id)->where('foto_profil', $userFoto)->exists()
+                            || Instruktur::withTrashed()->where('foto_profil', $userFoto)->exists();
+                        if (! $stillUsed) {
+                            Storage::disk('public')->delete($userFoto);
+                        }
+                    });
+                }
+
                 return;
             }
 
@@ -100,7 +134,45 @@ class User extends Authenticatable
                     'data_baru'           => ['user_id' => null, 'status' => 'nonaktif'],
                 ]);
             } else {
+                $fotoInstruktur = $instruktur->foto_profil;
+                $fileSertUtama  = $instruktur->file_sertifikasi;
+                $certPaths      = Schema::hasTable('instruktur_sertifikasis')
+                    ? $instruktur->sertifikasis()->pluck('file_path')->filter()->unique()->values()->all()
+                    : [];
+
+                if (Schema::hasTable('instruktur_sertifikasis')) {
+                    $instruktur->sertifikasis()->delete();
+                }
+                if (Schema::hasTable('instruktur_cutis')) {
+                    $instruktur->cutis()->delete();
+                }
+                if (Schema::hasTable('instruktur_audit_logs')) {
+                    $instruktur->auditLogs()->delete();
+                }
+
                 $instruktur->forceDelete();
+
+                DB::afterCommit(function () use ($userFoto, $fotoInstruktur, $fileSertUtama, $certPaths, $user) {
+                    foreach (array_unique(array_filter([$userFoto, $fotoInstruktur])) as $fotoPath) {
+                        $stillUsed = User::where('id', '!=', $user->id)->where('foto_profil', $fotoPath)->exists()
+                            || Instruktur::withTrashed()->where('foto_profil', $fotoPath)->exists();
+                        if (! $stillUsed) {
+                            Storage::disk('public')->delete($fotoPath);
+                        }
+                    }
+
+                    $allCertPaths = array_unique(array_filter(array_merge([$fileSertUtama], $certPaths)));
+                    foreach ($allCertPaths as $certPath) {
+                        $stillReferenced = (Schema::hasTable('instruktur_sertifikasis')
+                                && InstrukturSertifikasi::where('file_path', $certPath)->exists())
+                            || Instruktur::withTrashed()->where('file_sertifikasi', $certPath)->exists();
+
+                        if (! $stillReferenced) {
+                            Storage::disk('local')->delete($certPath);
+                            Storage::disk('public')->delete($certPath);
+                        }
+                    }
+                });
             }
         });
     }
@@ -117,26 +189,43 @@ class User extends Authenticatable
                 $query->where('user_id', $this->id);
                 if (! empty($this->email)) {
                     $query->orWhere(function ($sub) {
-                        $sub->whereNull('user_id')->where('email', $this->email);
+                        $sub->whereNull('user_id')->whereRaw('LOWER(email) = ?', [mb_strtolower($this->email)]);
                     });
                 }
             })
             ->first();
 
         if ($instruktur) {
-            if ($instruktur->trashed() && $this->is_active) {
+            $wasTrashed = $instruktur->trashed();
+            $oldStatus  = $instruktur->status;
+            $newStatus  = $this->is_active ? 'aktif' : 'nonaktif';
+
+            if ($wasTrashed && $this->is_active) {
                 $instruktur->restore();
             }
             $payload = [
                 'user_id'      => $this->id,
                 'nama_lengkap' => $this->name,
                 'email'        => $this->email,
-                'status'       => $this->is_active ? 'aktif' : 'nonaktif',
+                'status'       => $newStatus,
             ];
             if (! empty($this->foto_profil)) {
                 $payload['foto_profil'] = $this->foto_profil;
             }
             $instruktur->updateQuietly($payload);
+
+            if (($wasTrashed && $this->is_active) || $oldStatus !== $newStatus) {
+                InstrukturAuditLog::create([
+                    'instruktur_id'       => $instruktur->id,
+                    'user_id'             => auth()->id(),
+                    'aksi'                => 'status_diubah',
+                    'ringkasan_perubahan' => $wasTrashed && $this->is_active
+                        ? "Profil instruktur {$instruktur->nama_lengkap} dipulihkan dari arsip saat sinkronisasi akun login."
+                        : "Status instruktur disinkronkan dari akun login ({$oldStatus} menjadi {$newStatus}).",
+                    'data_lama'           => ['status' => $oldStatus, 'deleted_at' => $wasTrashed ? 'trashed' : null],
+                    'data_baru'           => ['status' => $newStatus, 'deleted_at' => $instruktur->trashed() ? 'trashed' : null],
+                ]);
+            }
 
             return $instruktur;
         }
@@ -268,6 +357,36 @@ class User extends Authenticatable
             $table = config('session.table', 'sessions');
             if (Schema::hasTable($table)) {
                 DB::table($table)->where('user_id', $this->id)->delete();
+            }
+        } catch (\Throwable) {
+            // Abaikan jika tabel session tidak tersedia pada driver non-database
+        }
+    }
+
+    public function revokeOtherSessions(?string $currentSessionId = null, ?string $plainPassword = null): void
+    {
+        if (! empty($this->remember_token)) {
+            $this->forceFill(['remember_token' => null])->saveQuietly();
+        }
+
+        if ($plainPassword !== null && auth()->check() && (int) auth()->id() === (int) $this->id) {
+            try {
+                \Illuminate\Support\Facades\Auth::logoutOtherDevices($plainPassword);
+            } catch (\Throwable) {
+                // Abaikan bila guard/session pengujian tidak mendukung rotasi password hash
+            }
+        }
+
+        try {
+            $table = config('session.table', 'sessions');
+            if (Schema::hasTable($table)) {
+                DB::table($table)
+                    ->where('user_id', $this->id)
+                    ->when(
+                        $currentSessionId !== null && $currentSessionId !== '',
+                        fn ($q) => $q->where('id', '!=', $currentSessionId)
+                    )
+                    ->delete();
             }
         } catch (\Throwable) {
             // Abaikan jika tabel session tidak tersedia pada driver non-database

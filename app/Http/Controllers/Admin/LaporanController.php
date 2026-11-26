@@ -219,12 +219,21 @@ class LaporanController extends Controller
 
     private function buildReportQuery(string $jenis, string $dari, string $sampai, string $instrukturId, string $statusFilter, ?Kelas $selectedKelas = null): Builder
     {
+        $sampaiEnd = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
+        $todayEnd  = today()->toDateString() . ' 23:59:59';
+
+        $dedupAktivitasIds = AktivitasMengajar::query()
+            ->selectRaw('MAX(id)')
+            ->when($instrukturId !== '', fn (Builder $q) => $q->where('instruktur_id', $instrukturId))
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
+            ->groupBy('instruktur_id', 'jadwal_id', 'tanggal');
+
         return match ($jenis) {
             'absensi' => Absensi::with(['instruktur', 'jadwal'])
                 ->when($instrukturId !== '', fn (Builder $q) => $q->where('instruktur_id', $instrukturId))
                 ->when($statusFilter !== '', fn (Builder $q) => $q->where('status', $statusFilter))
                 ->when($selectedKelas, fn (Builder $q) => $q->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq)))
-                ->whereBetween('tanggal', [$dari, $sampai])
+                ->whereBetween('tanggal', [$dari, $sampaiEnd])
                 ->orderByDesc('tanggal')
                 ->orderByDesc('id'),
 
@@ -239,10 +248,20 @@ class LaporanController extends Controller
                 ->orderByDesc('id'),
 
             'aktivitas' => AktivitasMengajar::with(['instruktur', 'jadwal', 'verifier'])
+                ->whereIn('id', $dedupAktivitasIds)
+                ->where(function (Builder $q) use ($todayEnd) {
+                    $q->where('status_konfirmasi', '!=', 'belum_dikonfirmasi')
+                        ->orWhere('tanggal', '<=', $todayEnd);
+                })
+                ->where(function (Builder $q) {
+                    $q->whereNull('jadwal_id')
+                        ->orWhere('status_konfirmasi', '!=', 'belum_dikonfirmasi')
+                        ->orWhereHas('jadwal', fn (Builder $jq) => $jq->where('status', '!=', 'dibatalkan'));
+                })
                 ->when($instrukturId !== '', fn (Builder $q) => $q->where('instruktur_id', $instrukturId))
                 ->when($statusFilter !== '', fn (Builder $q) => $q->where('status_konfirmasi', $statusFilter))
                 ->when($selectedKelas, fn (Builder $q) => $q->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq)))
-                ->whereBetween('tanggal', [$dari, $sampai])
+                ->whereBetween('tanggal', [$dari, $sampaiEnd])
                 ->orderByDesc('tanggal')
                 ->orderByDesc('id'),
 
@@ -259,7 +278,7 @@ class LaporanController extends Controller
             'observasi' => ObservasiSupervisor::with(['instruktur', 'supervisor', 'jadwal'])
                 ->when($instrukturId !== '', fn (Builder $q) => $q->where('instruktur_id', $instrukturId))
                 ->when($selectedKelas, fn (Builder $q) => $q->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq)))
-                ->whereBetween('tanggal', [$dari, $sampai])
+                ->whereBetween('tanggal', [$dari, $sampaiEnd])
                 ->orderByDesc('tanggal')
                 ->orderByDesc('id'),
         };
@@ -270,7 +289,10 @@ class LaporanController extends Controller
         $records = $this->kinerjaService->evaluateAll(
             $dari,
             $sampai,
-            $instrukturId !== '' ? $instrukturId : null
+            $instrukturId !== '' ? $instrukturId : null,
+            null,
+            $selectedKelas,
+            true
         );
 
         if ($selectedKelas !== null) {
@@ -282,8 +304,16 @@ class LaporanController extends Controller
                 ->whereNotNull('instruktur_id')
                 ->pluck('instruktur_id');
 
+            $evalInstrukturIds = Evaluasi::whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59'])
+                ->where(function (Builder $sub) use ($selectedKelas) {
+                    $sub->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq))
+                        ->orWhereHas('kodeEvaluasi', fn (Builder $kq) => $selectedKelas->scopeMatchingKodeEvaluasi($kq));
+                })
+                ->pluck('instruktur_id');
+
             $allowedIds = $jadwalInstrukturIds
                 ->merge($kodeInstrukturIds)
+                ->merge($evalInstrukturIds)
                 ->map(fn ($id) => (int) $id)
                 ->filter(fn (int $id) => $id > 0)
                 ->unique()
@@ -501,11 +531,7 @@ class LaporanController extends Controller
 
         $instruktur->loadMissing('sertifikasis');
 
-        $kinerjaRows = $this->buildKinerjaCollection($dari, $sampai, (string) $instruktur->id, '', $selectedKelas);
-        $kinerja     = $kinerjaRows->first();
-        if ($kinerja === null) {
-            $kinerja = $this->kinerjaService->evaluateInstruktur($instruktur, $dari, $sampai);
-        }
+        $kinerja = $this->kinerjaService->evaluateInstruktur($instruktur, $dari, $sampai, $selectedKelas);
 
         $jadwals    = $this->buildReportQuery('jadwal', $dari, $sampai, (string) $instruktur->id, '', $selectedKelas)->get();
         $absensis   = $this->buildReportQuery('absensi', $dari, $sampai, (string) $instruktur->id, '', $selectedKelas)->get();
@@ -536,14 +562,15 @@ class LaporanController extends Controller
             ->periode($dari, $sampai)
             ->when($instrukturId !== '', fn (Builder $q) => $q->where('instruktur_id', $instrukturId))
             ->when($selectedKelas, fn (Builder $q) => $selectedKelas->scopeMatchingJadwal($q))
-            ->get(['id', 'kelas_id', 'nama_kelas']);
+            ->get(['id', 'kelas_id', 'kode_kelas', 'nama_kelas']);
 
         $kelasUnik = $this->countUniqueKelasFromJadwals($jadwalsAktif);
 
-        $totalJamMengajar = round((float) $kinerjaRows->sum('jam_mengajar'), 1);
-        $totalSesi        = (int) $kinerjaRows->sum('total_jadwal');
-        $avgKehadiran     = $kinerjaRows->isNotEmpty()
-            ? round((float) $kinerjaRows->avg('persentase_kehadiran'), 1)
+        $totalJamMengajar   = round((float) $kinerjaRows->sum('jam_mengajar'), 1);
+        $totalSesi          = (int) $kinerjaRows->sum('total_jadwal');
+        $kehadiranValidRows = $kinerjaRows->filter(fn (array $r) => ($r['skor_kehadiran'] ?? null) !== null);
+        $avgKehadiran       = $kehadiranValidRows->isNotEmpty()
+            ? round((float) $kehadiranValidRows->avg('persentase_kehadiran'), 1)
             : 0.0;
 
         $evaluasiScores  = $kinerjaRows->pluck('skor_evaluasi')->filter(fn ($v) => $v !== null);
@@ -736,9 +763,15 @@ class LaporanController extends Controller
         $periodeLabel       = $filters['periodeLabel'];
         $activeFilterParams = $filters['activeFilterParams'];
 
-        $instrukturs     = Instruktur::orderBy('nama_lengkap')->get(['id', 'nama_lengkap', 'kode_instruktur']);
-        $kelasList       = Schema::hasTable('kelas')
-            ? Kelas::orderBy('kode_kelas')->get(['id', 'kode_kelas', 'nama_kelas', 'program_pelatihan', 'status'])
+        $instrukturs = Instruktur::withTrashed()
+            ->orderByRaw('CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('nama_lengkap')
+            ->get(['id', 'nama_lengkap', 'kode_instruktur', 'deleted_at']);
+        $kelasList = Schema::hasTable('kelas')
+            ? Kelas::withTrashed()
+                ->orderByRaw('CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END')
+                ->orderBy('kode_kelas')
+                ->get(['id', 'kode_kelas', 'nama_kelas', 'program_pelatihan', 'status', 'deleted_at'])
             : collect();
         $ruleConfig      = $this->kinerjaService->getRuleConfig();
         $isRuleConfirmed = (bool) ($ruleConfig['enabled'] ?? false);

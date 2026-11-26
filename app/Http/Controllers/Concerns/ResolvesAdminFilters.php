@@ -73,13 +73,59 @@ trait ResolvesAdminFilters
 
     protected function countUniqueKelasFromJadwals(Collection $jadwals): int
     {
+        if ($jadwals->isEmpty()) {
+            return 0;
+        }
+
+        $byKode = [];
+        $byNama = [];
+
+        if (Schema::hasTable('kelas')) {
+            foreach (Kelas::withTrashed()->get(['id', 'kode_kelas', 'nama_kelas']) as $kls) {
+                $kodeKey = strtoupper(trim((string) $kls->kode_kelas));
+                $namaKey = mb_strtolower(trim((string) $kls->nama_kelas));
+                if ($kodeKey !== '') {
+                    $byKode[$kodeKey] = (int) $kls->id;
+                }
+                if ($namaKey !== '' && ! isset($byNama[$namaKey])) {
+                    $byNama[$namaKey] = (int) $kls->id;
+                }
+            }
+        }
+
+        foreach ($jadwals as $j) {
+            if (! empty($j->kelas_id)) {
+                $kodeKey = strtoupper(trim((string) ($j->kode_kelas ?? '')));
+                $namaKey = mb_strtolower(trim((string) ($j->nama_kelas ?? '')));
+                if ($kodeKey !== '' && ! isset($byKode[$kodeKey])) {
+                    $byKode[$kodeKey] = (int) $j->kelas_id;
+                }
+                if ($namaKey !== '' && ! isset($byNama[$namaKey])) {
+                    $byNama[$namaKey] = (int) $j->kelas_id;
+                }
+            }
+        }
+
         return $jadwals
-            ->map(function (Jadwal $jadwal): string {
+            ->map(function (Jadwal $jadwal) use ($byKode, $byNama): string {
                 if (! empty($jadwal->kelas_id)) {
                     return 'id:' . (int) $jadwal->kelas_id;
                 }
 
-                return 'nama:' . strtolower(trim((string) $jadwal->nama_kelas));
+                $kodeKey = strtoupper(trim((string) ($jadwal->kode_kelas ?? '')));
+                $namaKey = mb_strtolower(trim((string) ($jadwal->nama_kelas ?? '')));
+
+                if ($kodeKey !== '' && isset($byKode[$kodeKey])) {
+                    return 'id:' . $byKode[$kodeKey];
+                }
+                if ($namaKey !== '' && isset($byNama[$namaKey])) {
+                    return 'id:' . $byNama[$namaKey];
+                }
+                if ($kodeKey !== '') {
+                    return 'kode:' . $kodeKey;
+                }
+
+                return 'nama:' . $namaKey;
             })
             ->filter(fn (string $key): bool => $key !== 'nama:')
             ->unique()

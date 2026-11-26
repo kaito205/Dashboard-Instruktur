@@ -138,7 +138,94 @@ class JadwalOccurrenceService
             }
         }
 
-        return $occurrences->sortByDesc(fn (array $item) => $item['waktu_selesai']->timestamp)->values();
+            return $occurrences->sortByDesc(fn (array $item) => $item['waktu_selesai']->timestamp)->values();
+    }
+
+    /**
+     * Uraikan seluruh pertemuan terjadwal (spesifik maupun pola mingguan) dalam rentang [$dari, $sampai]
+     * yang tidak dibatalkan dan tidak jatuh pada masa cuti/izin instruktur.
+     */
+    public function expandScheduledOccurrences(
+        Collection $jadwals,
+        string $dari,
+        string $sampai
+    ): Collection {
+        if ($sampai < $dari || $jadwals->isEmpty()) {
+            return collect();
+        }
+
+        $occurrences = collect();
+
+        foreach ($jadwals as $jadwal) {
+            if (! $jadwal instanceof Jadwal || $jadwal->status === 'dibatalkan') {
+                continue;
+            }
+
+            if (! $jadwal->is_pola_mingguan) {
+                if (! $jadwal->tanggal) {
+                    continue;
+                }
+                $tgl = $jadwal->tanggal->toDateString();
+                if ($tgl < $dari || $tgl > $sampai) {
+                    continue;
+                }
+                if ($jadwal->instruktur?->sedangCutiAtauIzinPada($tgl, $jadwal->hari)) {
+                    continue;
+                }
+                $occurrences->push([
+                    'jadwal'  => $jadwal,
+                    'tanggal' => $tgl,
+                ]);
+                continue;
+            }
+
+            if (! $jadwal->hari) {
+                continue;
+            }
+
+            $rangeStart = $dari;
+            if ($jadwal->periode_mulai && $jadwal->periode_mulai->toDateString() > $rangeStart) {
+                $rangeStart = $jadwal->periode_mulai->toDateString();
+            }
+
+            $rangeEnd = $sampai;
+            if ($jadwal->periode_selesai && $jadwal->periode_selesai->toDateString() < $rangeEnd) {
+                $rangeEnd = $jadwal->periode_selesai->toDateString();
+            }
+
+            if ($rangeEnd < $rangeStart) {
+                continue;
+            }
+
+            $cursor     = Carbon::parse($rangeStart)->startOfDay();
+            $endCursor  = Carbon::parse($rangeEnd)->startOfDay();
+            $foundFirst = false;
+
+            for ($i = 0; $i < 7 && $cursor->lte($endCursor); $i++) {
+                if (Jadwal::hariDariTanggal($cursor) === $jadwal->hari) {
+                    $foundFirst = true;
+                    break;
+                }
+                $cursor->addDay();
+            }
+
+            if (! $foundFirst) {
+                continue;
+            }
+
+            while ($cursor->lte($endCursor)) {
+                $tgl = $cursor->toDateString();
+                if (! $jadwal->instruktur?->sedangCutiAtauIzinPada($tgl, $jadwal->hari)) {
+                    $occurrences->push([
+                        'jadwal'  => $jadwal,
+                        'tanggal' => $tgl,
+                    ]);
+                }
+                $cursor->addDays(7);
+            }
+        }
+
+        return $occurrences->values();
     }
 
     /**
@@ -275,6 +362,14 @@ class JadwalOccurrenceService
                 'label' => 'Tidak Ada Sesi Hari Ini',
                 'color' => 'gray',
                 'code'  => 'bukan_jadwal_hari_ini',
+            ];
+        }
+
+        if ($jadwal->instruktur?->sedangCutiAtauIzinPada($tanggalSesi, $jadwal->hari)) {
+            return [
+                'label' => 'Cuti / Izin',
+                'color' => 'blue',
+                'code'  => 'cuti_izin',
             ];
         }
 

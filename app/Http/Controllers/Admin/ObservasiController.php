@@ -11,6 +11,7 @@ use App\Models\ObservasiSupervisor;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class ObservasiController extends Controller
 {
@@ -43,16 +44,23 @@ class ObservasiController extends Controller
 
         $instrukturId = (string) ($request->input('instruktur') ?? '');
         [$dari, $sampai] = $this->resolveDateRange($request);
+        $sampaiEnd = str_contains($sampai, ':') ? $sampai : ($sampai . ' 23:59:59');
 
         $observasis = ObservasiSupervisor::with(['instruktur', 'supervisor', 'jadwal'])
             ->when($instrukturId !== '', fn ($q) => $q->where('instruktur_id', $instrukturId))
-            ->whereBetween('tanggal', [$dari, $sampai])
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
             ->orderByDesc('tanggal')
             ->orderByDesc('id')
             ->paginate(15)
             ->withQueryString();
 
-        $instrukturs     = Instruktur::aktif()->orderBy('nama_lengkap')->get(['id', 'nama_lengkap', 'kode_instruktur']);
+        $instrukturs = Instruktur::withTrashed()
+            ->where(function ($q) {
+                $q->where(fn ($sub) => $sub->whereNull('deleted_at')->where('status', 'aktif'))
+                    ->orWhereHas('observasiSupervisors');
+            })
+            ->orderBy('nama_lengkap')
+            ->get(['id', 'nama_lengkap', 'kode_instruktur']);
         $jadwals         = Jadwal::with('instruktur')->where('status', '!=', 'dibatalkan')->orderBy('nama_kelas')->get();
         $indikatorLabels = ObservasiSupervisor::getIndikatorLabels();
         $editObservasi   = $request->filled('edit') ? ObservasiSupervisor::find($request->input('edit')) : null;
@@ -77,7 +85,7 @@ class ObservasiController extends Controller
         $this->authorizeObservasi();
 
         $validated = $request->validate([
-            'instruktur_id'     => ['required', 'integer', 'exists:instrukturs,id'],
+            'instruktur_id'     => ['required', 'integer', Rule::exists('instrukturs', 'id')->whereNull('deleted_at')],
             'jadwal_id'         => ['nullable', 'integer', 'exists:jadwals,id'],
             'tanggal'           => ['required', 'date'],
             'indikator_1'       => ['required', 'integer', 'min:1', 'max:5'],
@@ -89,6 +97,7 @@ class ObservasiController extends Controller
             'rekomendasi'       => ['nullable', 'string', 'max:2000'],
         ], [
             'instruktur_id.required' => 'Instruktur wajib dipilih.',
+            'instruktur_id.exists'   => 'Instruktur tidak ditemukan atau sudah diarsipkan.',
             'tanggal.required'       => 'Tanggal observasi wajib diisi.',
             'indikator_1.required'   => 'Skor Indikator 1 wajib dipilih (1-5).',
             'indikator_2.required'   => 'Skor Indikator 2 wajib dipilih (1-5).',
@@ -97,16 +106,24 @@ class ObservasiController extends Controller
             'indikator_5.required'   => 'Skor Indikator 5 wajib dipilih (1-5).',
         ]);
 
-        $targetInstrukturId = array_key_exists('instruktur_id', $validated)
-            ? (int) $validated['instruktur_id']
-            : (int) $observasi->instruktur_id;
+        $targetInstrukturId = (int) $validated['instruktur_id'];
 
         if (! empty($validated['jadwal_id'])) {
             $jadwalSelected = Jadwal::find((int) $validated['jadwal_id']);
-            if (! $jadwalSelected || (int) $jadwalSelected->instruktur_id !== $targetInstrukturId) {
+            if (! $jadwalSelected || $jadwalSelected->status === 'dibatalkan') {
+                return back()
+                    ->withInput()
+                    ->withErrors(['jadwal_id' => 'Jadwal kelas yang sudah dibatalkan tidak dapat diobservasi.']);
+            }
+            if ((int) $jadwalSelected->instruktur_id !== $targetInstrukturId) {
                 return back()
                     ->withInput()
                     ->withErrors(['jadwal_id' => 'Jadwal kelas yang dipilih tidak sesuai dengan instruktur yang diobservasi.']);
+            }
+            if (! $jadwalSelected->berlakuPadaTanggal($validated['tanggal'])) {
+                return back()
+                    ->withInput()
+                    ->withErrors(['tanggal' => "Tanggal observasi tidak sesuai dengan jadwal kelas ({$jadwalSelected->tanggal_label})."]);
             }
         }
 
@@ -149,7 +166,12 @@ class ObservasiController extends Controller
         $this->authorizeObservasiOwnership($observasi);
 
         $validated = $request->validate([
-            'instruktur_id'     => ['sometimes', 'required', 'integer', 'exists:instrukturs,id'],
+            'instruktur_id'     => [
+                'sometimes',
+                'required',
+                'integer',
+                Rule::exists('instrukturs', 'id')->where(fn ($q) => $q->whereNull('deleted_at')->orWhere('id', $observasi->instruktur_id)),
+            ],
             'jadwal_id'         => ['nullable', 'integer', 'exists:jadwals,id'],
             'tanggal'           => ['required', 'date'],
             'indikator_1'       => ['required', 'integer', 'min:1', 'max:5'],
@@ -161,6 +183,7 @@ class ObservasiController extends Controller
             'rekomendasi'       => ['nullable', 'string', 'max:2000'],
         ], [
             'instruktur_id.required' => 'Instruktur wajib dipilih.',
+            'instruktur_id.exists'   => 'Instruktur tidak ditemukan atau sudah diarsipkan.',
             'tanggal.required'       => 'Tanggal observasi wajib diisi.',
             'indikator_1.required'   => 'Skor Indikator 1 wajib dipilih (1-5).',
             'indikator_2.required'   => 'Skor Indikator 2 wajib dipilih (1-5).',
@@ -175,10 +198,20 @@ class ObservasiController extends Controller
 
         if (! empty($validated['jadwal_id'])) {
             $jadwalSelected = Jadwal::find((int) $validated['jadwal_id']);
-            if (! $jadwalSelected || (int) $jadwalSelected->instruktur_id !== $targetInstrukturId) {
+            if (! $jadwalSelected || $jadwalSelected->status === 'dibatalkan') {
+                return back()
+                    ->withInput()
+                    ->withErrors(['jadwal_id' => 'Jadwal kelas yang sudah dibatalkan tidak dapat diobservasi.']);
+            }
+            if ((int) $jadwalSelected->instruktur_id !== $targetInstrukturId) {
                 return back()
                     ->withInput()
                     ->withErrors(['jadwal_id' => 'Jadwal kelas yang dipilih tidak sesuai dengan instruktur yang diobservasi.']);
+            }
+            if (! $jadwalSelected->berlakuPadaTanggal($validated['tanggal'])) {
+                return back()
+                    ->withInput()
+                    ->withErrors(['tanggal' => "Tanggal observasi tidak sesuai dengan jadwal kelas ({$jadwalSelected->tanggal_label})."]);
             }
         }
 
@@ -247,11 +280,13 @@ class ObservasiController extends Controller
             return back()->with('error', 'Jurnal aktivitas yang belum diisi atau dikonfirmasi oleh instruktur tidak dapat diverifikasi.');
         }
 
-        DB::transaction(function () use ($aktivitas, $validated) {
+        $isMenunggu = $validated['status_verifikasi'] === 'menunggu';
+
+        DB::transaction(function () use ($aktivitas, $validated, $isMenunggu) {
             $aktivitas->update([
                 'status_verifikasi'  => $validated['status_verifikasi'],
-                'verified_by'        => auth()->id(),
-                'verified_at'        => now(),
+                'verified_by'        => $isMenunggu ? null : auth()->id(),
+                'verified_at'        => $isMenunggu ? null : now(),
                 'catatan_supervisor' => $validated['catatan_supervisor'] ?? null,
             ]);
         });

@@ -188,6 +188,7 @@ class InstrukturController extends Controller
 
         $instruktur->load([
             'user',
+            'cutis',
             'sertifikasis',
             'jadwals'            => fn ($q) => $q->orderByRaw('CASE WHEN is_pola_mingguan = 1 THEN 0 ELSE 1 END')->latest('tanggal')->take(10),
             'aktivitasMengajars' => fn ($q) => $q->with('jadwal.kelas')->latest('tanggal')->take(10),
@@ -195,18 +196,29 @@ class InstrukturController extends Controller
             'auditLogs'          => fn ($q) => $q->with('user')->latest()->take(20),
         ]);
 
-        $dari   = now()->subDays(30)->toDateString();
-        $sampai = now()->toDateString();
+        $dari      = now()->subDays(30)->toDateString();
+        $sampai    = now()->toDateString();
+        $sampaiEnd = $sampai . ' 23:59:59';
 
-        $statsAbsensi = $instruktur->absensis()
-            ->whereBetween('tanggal', [$dari, $sampai])
-            ->selectRaw('status, COUNT(*) as total')
-            ->groupBy('status')
-            ->pluck('total', 'status');
+        $occurrenceService = new \App\Services\JadwalOccurrenceService();
+        $validAbsensis = $occurrenceService->filterValidAttendanceRecords(
+            $instruktur->absensis()->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd])->get()
+        );
+        $jadwals30 = $instruktur->jadwals()->where('status', '!=', 'dibatalkan')->periode($dari, $sampai)->get();
+        $jadwals30->each(fn ($j) => $j->setRelation('instruktur', $instruktur));
+        $missed30 = $occurrenceService->getMissedAttendanceOccurrences($jadwals30, $validAbsensis, $dari, $sampai)->count();
 
+        $statsAbsensi = collect([
+            'hadir'       => $validAbsensis->where('status', 'hadir')->count(),
+            'terlambat'   => $validAbsensis->where('status', 'terlambat')->count(),
+            'izin'        => $validAbsensis->whereIn('status', ['izin', 'sakit'])->count(),
+            'tidak_hadir' => $validAbsensis->whereIn('status', ['tidak_hadir', 'alpha'])->count() + $missed30,
+        ]);
+
+        $avgEval = $instruktur->evaluasis()->whereNotNull('total_nilai')->avg('total_nilai');
         $statsEvaluasi = [
             'total'     => $instruktur->evaluasis()->count(),
-            'rata_rata' => round($instruktur->evaluasis()->avg('total_nilai') ?? 0, 2),
+            'rata_rata' => $avgEval !== null ? round((float) $avgEval, 2) : null,
         ];
 
         $kinerjaSummary = $this->kinerjaService->evaluateInstruktur(
@@ -248,14 +260,22 @@ class InstrukturController extends Controller
         unset($data['akun_mode'], $data['password_awal']);
         $data['status_ketersediaan'] = $data['status_ketersediaan'] ?? $instruktur->status_ketersediaan ?? 'tersedia';
 
-        $hasCertInput = $request->hasAny(['nama_sertifikasi', 'sertifikasi_berlaku_sampai'])
+        $hasCertInput = $request->filled('nama_sertifikasi')
+            || $request->filled('sertifikasi_berlaku_sampai')
             || $request->hasFile('file_sertifikasi');
 
-        if (! $hasCertInput) {
-            unset($data['nama_sertifikasi'], $data['sertifikasi_berlaku_sampai'], $data['file_sertifikasi']);
+        if (! $request->filled('nama_sertifikasi')) {
+            unset($data['nama_sertifikasi']);
+        }
+        if (! $request->filled('sertifikasi_berlaku_sampai')) {
+            unset($data['sertifikasi_berlaku_sampai']);
+        }
+        if (! $request->hasFile('file_sertifikasi')) {
+            unset($data['file_sertifikasi']);
         }
 
         $trackedFields = [
+            'user_id',
             'nama_lengkap',
             'kode_instruktur',
             'email',
@@ -270,15 +290,30 @@ class InstrukturController extends Controller
             'cuti_selesai',
             'keterangan_cuti',
         ];
-        $snapshotLama = $instruktur->only($trackedFields);
+        $snapshotLama       = $instruktur->only($trackedFields);
+        $previousUserId     = $instruktur->user_id;
+        $oldFotoToDelete    = null;
+        $oldCertToDelete    = null;
+        $oldCertIgnoreId    = null;
 
-        DB::transaction(function () use ($data, $request, $instruktur, $trackedFields, $snapshotLama, $hasCertInput) {
+        DB::transaction(function () use (
+            $data,
+            $request,
+            $instruktur,
+            $trackedFields,
+            $snapshotLama,
+            $hasCertInput,
+            $previousUserId,
+            &$oldFotoToDelete,
+            &$oldCertToDelete,
+            &$oldCertIgnoreId
+        ) {
             if ($request->hasFile('foto_profil')) {
-                if ($instruktur->foto_profil) {
-                    Storage::disk('public')->delete($instruktur->foto_profil);
+                $newFoto = $request->file('foto_profil')->store('instruktur/foto', 'public');
+                if ($instruktur->foto_profil && $instruktur->foto_profil !== $newFoto) {
+                    $oldFotoToDelete = $instruktur->foto_profil;
                 }
-                $data['foto_profil'] = $request->file('foto_profil')
-                    ->store('instruktur/foto', 'public');
+                $data['foto_profil'] = $newFoto;
             } else {
                 unset($data['foto_profil']);
             }
@@ -286,8 +321,8 @@ class InstrukturController extends Controller
             $uploadedCertName = null;
             $uploadedCertPath = null;
             if ($hasCertInput && $request->hasFile('file_sertifikasi')) {
-                $uploadedCertName        = $request->file('file_sertifikasi')->getClientOriginalName();
-                $uploadedCertPath        = $request->file('file_sertifikasi')->store('instruktur/sertifikasi', 'local');
+                $uploadedCertName         = $request->file('file_sertifikasi')->getClientOriginalName();
+                $uploadedCertPath         = $request->file('file_sertifikasi')->store('instruktur/sertifikasi', 'local');
                 $data['file_sertifikasi'] = $uploadedCertPath;
             } else {
                 unset($data['file_sertifikasi']);
@@ -301,15 +336,16 @@ class InstrukturController extends Controller
                     $oldCertPath = $latestCert->file_path;
                     $certUpdate  = [
                         'nama_sertifikasi' => !empty($data['nama_sertifikasi']) ? $data['nama_sertifikasi'] : $latestCert->nama_sertifikasi,
-                        'berlaku_sampai'   => $request->has('sertifikasi_berlaku_sampai') ? ($data['sertifikasi_berlaku_sampai'] ?? null) : $latestCert->berlaku_sampai,
+                        'berlaku_sampai'   => $request->filled('sertifikasi_berlaku_sampai') ? $data['sertifikasi_berlaku_sampai'] : $latestCert->berlaku_sampai,
                     ];
                     if ($uploadedCertPath !== null) {
                         $certUpdate['file_path'] = $uploadedCertPath;
                         $certUpdate['file_name'] = $uploadedCertName;
                     }
                     $latestCert->update($certUpdate);
-                    if ($uploadedCertPath !== null && $oldCertPath !== $uploadedCertPath) {
-                        $this->deleteSertifikasiFileIfUnused($oldCertPath, $latestCert->id);
+                    if ($uploadedCertPath !== null && $oldCertPath && $oldCertPath !== $uploadedCertPath) {
+                        $oldCertToDelete = $oldCertPath;
+                        $oldCertIgnoreId = $latestCert->id;
                     }
                 } elseif (!empty($data['nama_sertifikasi']) || !empty($data['sertifikasi_berlaku_sampai']) || $uploadedCertPath !== null) {
                     $instruktur->sertifikasis()->create([
@@ -325,10 +361,22 @@ class InstrukturController extends Controller
 
             $instrukturFresh = $instruktur->fresh();
 
+            // Jika tautan akun login dilepas atau diganti, nonaktifkan akun instruktur lama agar tidak aktif yatim
+            if ($previousUserId && (int) $previousUserId !== (int) ($instrukturFresh->user_id ?? 0)) {
+                $detachedUser = User::find($previousUserId);
+                if ($detachedUser
+                    && $detachedUser->role === 'instruktur'
+                    && ! Instruktur::withTrashed()->where('user_id', $detachedUser->id)->exists()
+                ) {
+                    $detachedUser->updateQuietly(['is_active' => false]);
+                    $detachedUser->revokeActiveSessions();
+                }
+            }
+
             if ($instrukturFresh->user) {
-                $emailSync = $instrukturFresh->email;
+                $emailSync    = $instrukturFresh->email;
                 $canSyncEmail = !empty($emailSync) && !User::where('email', $emailSync)->where('id', '!=', $instrukturFresh->user_id)->exists();
-                $isActiveNow = $instrukturFresh->status === 'aktif';
+                $isActiveNow  = $instrukturFresh->status === 'aktif';
                 $instrukturFresh->user->updateQuietly([
                     'name'        => $instrukturFresh->nama_lengkap,
                     'email'       => $canSyncEmail ? $emailSync : $instrukturFresh->user->email,
@@ -368,6 +416,18 @@ class InstrukturController extends Controller
                 'data_baru'           => $snapshotBaru,
             ]);
         });
+
+        if ($oldFotoToDelete !== null) {
+            $stillUsedFoto = User::where('foto_profil', $oldFotoToDelete)->exists()
+                || Instruktur::withTrashed()->where('foto_profil', $oldFotoToDelete)->exists();
+            if (! $stillUsedFoto) {
+                Storage::disk('public')->delete($oldFotoToDelete);
+            }
+        }
+
+        if ($oldCertToDelete !== null) {
+            $this->deleteSertifikasiFileIfUnused($oldCertToDelete, $oldCertIgnoreId);
+        }
 
         $redirect = redirect()->route('admin.instruktur.index')
             ->with('success', 'Data instruktur berhasil diperbarui dan tercatat pada riwayat perubahan.');
@@ -495,7 +555,9 @@ class InstrukturController extends Controller
             'keterangan'       => $sertifikasi->keterangan,
         ];
 
-        DB::transaction(function () use ($request, $instruktur, $sertifikasi, $validated, $dataLama) {
+        $oldCertToDelete = null;
+
+        DB::transaction(function () use ($request, $instruktur, $sertifikasi, $validated, $dataLama, &$oldCertToDelete) {
             $oldPath  = $sertifikasi->file_path;
             $filePath = $oldPath;
             $fileName = $sertifikasi->file_name;
@@ -515,7 +577,7 @@ class InstrukturController extends Controller
             ]);
 
             if ($oldPath && $oldPath !== $filePath) {
-                $this->deleteSertifikasiFileIfUnused($oldPath, $sertifikasi->id);
+                $oldCertToDelete = $oldPath;
             }
 
             $instruktur->syncPrimarySertifikasiSummary();
@@ -535,6 +597,10 @@ class InstrukturController extends Controller
             ]);
         });
 
+        if ($oldCertToDelete !== null) {
+            $this->deleteSertifikasiFileIfUnused($oldCertToDelete, $sertifikasi->id);
+        }
+
         return redirect($this->sertifikasiRedirectUrl($request, $instruktur))
             ->with('success', "Sertifikat {$sertifikasi->nama_sertifikasi} berhasil diperbarui.");
     }
@@ -548,7 +614,7 @@ class InstrukturController extends Controller
         $oldPath       = $sertifikasi->file_path;
         $sertifikasiId = $sertifikasi->id;
 
-        DB::transaction(function () use ($instruktur, $sertifikasi, $nama, $oldPath, $sertifikasiId) {
+        DB::transaction(function () use ($instruktur, $sertifikasi, $nama) {
             $dataLama = [
                 'nama_sertifikasi' => $sertifikasi->nama_sertifikasi,
                 'berlaku_sampai'   => $sertifikasi->berlaku_sampai?->format('Y-m-d'),
@@ -556,7 +622,6 @@ class InstrukturController extends Controller
             ];
 
             $sertifikasi->delete();
-            $this->deleteSertifikasiFileIfUnused($oldPath, $sertifikasiId);
             $instruktur->syncPrimarySertifikasiSummary();
 
             InstrukturAuditLog::create([
@@ -568,6 +633,8 @@ class InstrukturController extends Controller
                 'data_baru'           => null,
             ]);
         });
+
+        $this->deleteSertifikasiFileIfUnused($oldPath, $sertifikasiId);
 
         return redirect($this->sertifikasiRedirectUrl($request, $instruktur))
             ->with('success', "Sertifikat {$nama} berhasil dihapus.");

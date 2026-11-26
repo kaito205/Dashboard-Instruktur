@@ -73,6 +73,8 @@ class Jadwal extends Model
             } elseif ($jadwal->tanggal !== null) {
                 $jadwal->is_pola_mingguan = false;
                 $jadwal->hari = self::hariDariTanggal($jadwal->tanggal);
+                $jadwal->periode_mulai = null;
+                $jadwal->periode_selesai = null;
             }
         });
     }
@@ -217,8 +219,11 @@ class Jadwal extends Model
             $hariDalamRentang = [];
         }
 
-        return $query->where(function ($q) use ($dari, $sampai, $hariDalamRentang) {
-            $q->whereBetween('tanggal', [$dari, $sampai])
+        $dariDate   = Carbon::parse($dari)->toDateString();
+        $sampaiEnd  = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
+
+        return $query->where(function ($q) use ($dariDate, $sampaiEnd, $dari, $sampai, $hariDalamRentang) {
+            $q->whereBetween('tanggal', [$dariDate, $sampaiEnd])
                 ->orWhere(function ($sub) use ($dari, $sampai, $hariDalamRentang) {
                     $sub->where('is_pola_mingguan', true)
                         ->when(!empty($hariDalamRentang), fn ($h) => $h->whereIn('hari', $hariDalamRentang))

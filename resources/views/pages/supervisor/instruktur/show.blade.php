@@ -74,7 +74,7 @@
                 <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">Izin</p>
             </div>
             <div class="rounded-xl border border-gray-200 bg-white p-4 text-center dark:border-gray-800 dark:bg-gray-900">
-                <p class="font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ ($statsEvaluasi['total'] ?? 0) > 0 ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
+                <p class="font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ ($statsEvaluasi['rata_rata'] ?? null) !== null ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
                 <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-300">Rata-rata Evaluasi ({{ $statsEvaluasi['total'] ?? 0 }})</p>
             </div>
         </div>

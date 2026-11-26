@@ -120,7 +120,7 @@ class EvaluasiPublikController extends Controller
             $komentar,
             $request
         ) {
-            $kodeEvaluasi = KodeEvaluasi::with('instruktur')
+            $kodeEvaluasi = KodeEvaluasi::with(['instruktur', 'kelas'])
                 ->whereRaw('UPPER(kode) = ?', [$inputKode])
                 ->lockForUpdate()
                 ->first();
@@ -162,8 +162,27 @@ class EvaluasiPublikController extends Controller
             }
 
             $lockKey = 'eval_lock_' . $kodeEvaluasi->id . '_' . $resolvedInstrukturId . '_' . ($selectedJadwal?->id ?? 0) . '_' . today()->toDateString();
-            if ($request->hasSession() && $request->session()->has($lockKey)) {
+            if (
+                ($request->hasSession() && $request->session()->has($lockKey))
+                || $request->cookie($lockKey) === '1'
+            ) {
                 return ['error_field' => 'kode', 'error' => 'Anda sudah mengirimkan evaluasi untuk sesi kelas dan instruktur ini pada hari ini. Terima kasih atas partisipasi Anda.'];
+            }
+
+            if (mb_strtolower($namaPengisi) !== 'anonim') {
+                $alreadySubmittedByName = Evaluasi::where('kode_evaluasi_id', $kodeEvaluasi->id)
+                    ->where('instruktur_id', $resolvedInstrukturId)
+                    ->when(
+                        $selectedJadwal !== null,
+                        fn ($q) => $q->where('jadwal_id', $selectedJadwal->id),
+                        fn ($q) => $q->whereNull('jadwal_id')
+                    )
+                    ->whereRaw('LOWER(nama_pengisi) = ?', [mb_strtolower($namaPengisi)])
+                    ->exists();
+
+                if ($alreadySubmittedByName) {
+                    return ['error_field' => 'nama_pengisi', 'error' => "Peserta atas nama \"{$namaPengisi}\" sudah mengirimkan evaluasi untuk sesi dan instruktur ini."];
+                }
             }
 
             $eval = Evaluasi::create([
@@ -212,6 +231,7 @@ class EvaluasiPublikController extends Controller
         if ($request->hasSession()) {
             $request->session()->put($lockKey, true);
         }
+        cookie()->queue(cookie($lockKey, '1', 60 * 24));
 
         return redirect()->route('evaluasi.publik.berhasil')->with('evaluasi_summary', [
             'kode'              => $kodeEvaluasi->kode,

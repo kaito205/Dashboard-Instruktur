@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 
 class ProfilController extends Controller
 {
@@ -55,18 +56,23 @@ class ProfilController extends Controller
     {
         $request->validate([
             'current_password' => ['required', 'current_password'],
-            'password'         => ['required', 'string', 'min:8', 'confirmed'],
+            'password'         => ['required', 'string', 'confirmed', Password::min(8)->letters()->mixedCase()->numbers()],
         ], [
             'current_password.required'         => 'Password saat ini wajib diisi.',
             'current_password.current_password' => 'Password saat ini tidak sesuai.',
             'password.required'                 => 'Password baru wajib diisi.',
-            'password.min'                      => 'Password baru minimal 8 karakter.',
+            'password.min'                      => 'Password baru minimal 8 karakter dan wajib mengandung huruf besar, huruf kecil, serta angka.',
             'password.confirmed'                => 'Konfirmasi password baru tidak cocok.',
         ]);
 
-        auth()->user()->update([
+        $user = auth()->user();
+        $user->update([
             'password' => Hash::make($request->password),
         ]);
+        $user->revokeOtherSessions(
+            $request->hasSession() ? $request->session()->getId() : null,
+            $request->password
+        );
 
         return back()->with('success', 'Password akun berhasil diperbarui.');
     }

@@ -43,9 +43,9 @@ class MonitoringController extends Controller
             $sampaiLalu = $startCurrent->copy()->subDay()->toDateString();
         }
 
-        $dataKinerjaSaatIni = $this->kinerjaService->evaluateAll($dari, $sampai, $instrukturId ?: null);
+        $dataKinerjaSaatIni = $this->kinerjaService->evaluateAll($dari, $sampai, $instrukturId ?: null, null, null, true);
         $dataKinerjaLaluMap = $this->kinerjaService
-            ->evaluateAll($dariLalu, $sampaiLalu, $instrukturId ?: null)
+            ->evaluateAll($dariLalu, $sampaiLalu, $instrukturId ?: null, null, null, true)
             ->keyBy(fn ($row) => $row['instruktur']->id);
 
         $dataKinerja = $dataKinerjaSaatIni->map(function (array $row) use ($dataKinerjaLaluMap) {
@@ -69,7 +69,12 @@ class MonitoringController extends Controller
         $ruleConfig      = $this->kinerjaService->getRuleConfig();
         $kategoriRanges  = $this->kinerjaService->getKategoriRangeLabels($ruleConfig);
         $isRuleConfirmed = (bool) ($ruleConfig['enabled'] ?? false);
-        $instrukturs     = Instruktur::aktif()->orderBy('nama_lengkap')->get(['id', 'nama_lengkap', 'kode_instruktur']);
+        $instrukturs = $dataKinerjaSaatIni
+            ->pluck('instruktur')
+            ->merge(Instruktur::aktif()->get(['id', 'nama_lengkap', 'kode_instruktur']))
+            ->unique('id')
+            ->sortBy('nama_lengkap')
+            ->values();
 
         $distribusiKategori = [
             'sangat_baik' => $dataKinerja->where('kategori', 'sangat_baik')->count(),

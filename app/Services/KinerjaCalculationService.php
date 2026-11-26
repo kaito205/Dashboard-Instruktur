@@ -3,8 +3,11 @@
 namespace App\Services;
 
 use App\Models\Instruktur;
+use App\Models\Jadwal;
+use App\Models\Kelas;
 use App\Models\Setting;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 class KinerjaCalculationService
@@ -169,15 +172,66 @@ class KinerjaCalculationService
      * 2. Jika suatu komponen belum memiliki data pada periode penilaian, bobot komponen tersebut didistribusikan
      *    secara proporsional ke komponen yang tersedia (tidak diberi nilai 0).
      */
-    public function evaluateInstruktur(Instruktur $instruktur, string $dari, string $sampai): array
-    {
-        $absensisRaw = $instruktur->relationLoaded('absensis')
-            ? $instruktur->absensis
-            : $instruktur->absensis()->with('jadwal')->whereBetween('tanggal', [$dari, $sampai])->get();
+    public function evaluateInstruktur(
+        Instruktur $instruktur,
+        string $dari,
+        string $sampai,
+        ?Kelas $selectedKelas = null
+    ): array {
+        $instruktur->loadMissing('cutis');
+        $sampaiEnd = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
 
-        $jadwals = $instruktur->relationLoaded('jadwals')
-            ? $instruktur->jadwals
-            : $instruktur->jadwals()->periode($dari, $sampai)->get();
+        if ($selectedKelas !== null) {
+            $jadwals = $instruktur->jadwals()
+                ->periode($dari, $sampai)
+                ->where(fn (Builder $q) => $selectedKelas->scopeMatchingJadwal($q))
+                ->get();
+
+            $absensisRaw = $instruktur->absensis()
+                ->with('jadwal')
+                ->whereBetween('tanggal', [$dari, $sampaiEnd])
+                ->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq))
+                ->get();
+
+            $evaluasis = $instruktur->evaluasis()
+                ->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59'])
+                ->where(function (Builder $sub) use ($selectedKelas) {
+                    $sub->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq))
+                        ->orWhereHas('kodeEvaluasi', fn (Builder $kq) => $selectedKelas->scopeMatchingKodeEvaluasi($kq));
+                })
+                ->get();
+
+            $aktivitas = $instruktur->aktivitasMengajars()
+                ->with('jadwal')
+                ->whereBetween('tanggal', [$dari, $sampaiEnd])
+                ->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq))
+                ->get();
+
+            $observasis = $instruktur->observasiSupervisors()
+                ->whereBetween('tanggal', [$dari, $sampaiEnd])
+                ->whereHas('jadwal', fn (Builder $jq) => $selectedKelas->scopeMatchingJadwal($jq))
+                ->get();
+        } else {
+            $absensisRaw = $instruktur->relationLoaded('absensis')
+                ? $instruktur->absensis
+                : $instruktur->absensis()->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd])->get();
+
+            $jadwals = $instruktur->relationLoaded('jadwals')
+                ? $instruktur->jadwals
+                : $instruktur->jadwals()->periode($dari, $sampai)->get();
+
+            $evaluasis = $instruktur->relationLoaded('evaluasis')
+                ? $instruktur->evaluasis
+                : $instruktur->evaluasis()->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59'])->get();
+
+            $aktivitas = $instruktur->relationLoaded('aktivitasMengajars')
+                ? $instruktur->aktivitasMengajars
+                : $instruktur->aktivitasMengajars()->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd])->get();
+
+            $observasis = $instruktur->relationLoaded('observasiSupervisors')
+                ? $instruktur->observasiSupervisors
+                : $instruktur->observasiSupervisors()->whereBetween('tanggal', [$dari, $sampaiEnd])->get();
+        }
 
         $jadwalById = $jadwals->keyBy('id');
         foreach ($absensisRaw as $absItem) {
@@ -187,17 +241,11 @@ class KinerjaCalculationService
         }
         $absensis = $this->occurrenceService->filterValidAttendanceRecords($absensisRaw);
 
-        $evaluasis = $instruktur->relationLoaded('evaluasis')
-            ? $instruktur->evaluasis
-            : $instruktur->evaluasis()->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59'])->get();
-
-        $aktivitas = $instruktur->relationLoaded('aktivitasMengajars')
-            ? $instruktur->aktivitasMengajars
-            : $instruktur->aktivitasMengajars()->whereBetween('tanggal', [$dari, $sampai])->get();
-
-        $observasis = $instruktur->relationLoaded('observasiSupervisors')
-            ? $instruktur->observasiSupervisors
-            : $instruktur->observasiSupervisors()->whereBetween('tanggal', [$dari, $sampai])->get();
+        foreach ($aktivitas as $aktItem) {
+            if ($aktItem->jadwal_id !== null && ! $aktItem->relationLoaded('jadwal') && $jadwalById->has($aktItem->jadwal_id)) {
+                $aktItem->setRelation('jadwal', $jadwalById->get($aktItem->jadwal_id));
+            }
+        }
 
         $jadwals->each(fn ($j) => $j->setRelation('instruktur', $instruktur));
 
@@ -221,20 +269,117 @@ class KinerjaCalculationService
             : null;
 
         // 2. Komponen Jadwal & Kepatuhan Laporan Aktivitas Mengajar (Nilai Asli & Skor Skala 0-100)
-        $jadwalKonkret      = $jadwals->where('is_pola_mingguan', false);
-        $jadwalPolaMingguan = $jadwals->where('is_pola_mingguan', true);
-        $totalJadwal        = $jadwals->count();
-        $totalJadwalSelesai = $jadwalKonkret->where('status', 'selesai')->count();
-
-        $totalJamMengajar = $jadwals
-            ->filter(fn ($j) => $j->status === 'selesai' || $j->is_pola_mingguan)
-            ->sum(fn ($j) => Carbon::parse($j->jam_mulai)->diffInMinutes(Carbon::parse($j->jam_selesai)) / 60);
-        $totalJamMengajar = round($totalJamMengajar, 1);
-
         $aktivitasDedup = $aktivitas
+            ->filter(fn ($a) => $a->jadwal === null || $a->jadwal->status !== 'dibatalkan')
             ->sortByDesc('id')
             ->unique(fn ($a) => ($a->jadwal_id ?? '0') . '|' . ($a->tanggal?->toDateString() ?? (string) $a->id))
             ->values();
+
+        $jadwalAktif        = $jadwals->where('status', '!=', 'dibatalkan')->values();
+        $jadwalKonkret      = $jadwalAktif->where('is_pola_mingguan', false)->values();
+        $jadwalPolaMingguan = $jadwalAktif->where('is_pola_mingguan', true)->values();
+
+        $scheduledOccurrences = $this->occurrenceService->expandScheduledOccurrences($jadwalAktif, $dari, $sampai);
+        $totalJadwal          = $scheduledOccurrences->count();
+
+        $hadirByJadwalDate = [];
+        $nonHadirByJadwalDate = [];
+        $nonHadirUmumByDate = [];
+        foreach ($absensis as $absRow) {
+            $dKey = $absRow->tanggal?->toDateString();
+            if (! $dKey) {
+                continue;
+            }
+            if (in_array($absRow->status, ['hadir', 'terlambat'], true)) {
+                if ($absRow->jadwal_id !== null) {
+                    $hadirByJadwalDate[$absRow->jadwal_id . '|' . $dKey] = true;
+                }
+            } elseif (in_array($absRow->status, ['izin', 'tidak_hadir'], true)) {
+                if ($absRow->jadwal_id !== null) {
+                    $nonHadirByJadwalDate[$absRow->jadwal_id . '|' . $dKey] = true;
+                } else {
+                    $nonHadirUmumByDate[$dKey] = true;
+                }
+            }
+        }
+
+        $dikonfirmasiByJadwalDate = [];
+        $tidakTerlaksanaByJadwalDate = [];
+        foreach ($aktivitasDedup as $aktRow) {
+            $dKey = $aktRow->tanggal?->toDateString();
+            if (! $dKey || $aktRow->jadwal_id === null) {
+                continue;
+            }
+            if ($aktRow->status_konfirmasi === 'dikonfirmasi') {
+                $dikonfirmasiByJadwalDate[$aktRow->jadwal_id . '|' . $dKey] = true;
+            } elseif ($aktRow->status_konfirmasi === 'tidak_terlaksana') {
+                $tidakTerlaksanaByJadwalDate[$aktRow->jadwal_id . '|' . $dKey] = true;
+            }
+        }
+
+        $durasiJamJadwal = static function (Jadwal $j): float {
+            $m0 = Carbon::parse(substr((string) $j->jam_mulai, 0, 5));
+            $m1 = Carbon::parse(substr((string) $j->jam_selesai, 0, 5));
+
+            return max(0.0, $m0->diffInMinutes($m1, false) / 60.0);
+        };
+
+        $jamKonkret = 0.0;
+        $konkretSelesaiCount = 0;
+        foreach ($jadwalKonkret as $jk) {
+            $tglK = $jk->tanggal?->toDateString() ?? '';
+            $kKey = $jk->id . '|' . $tglK;
+            $isRealized = $jk->status === 'selesai'
+                || isset($hadirByJadwalDate[$kKey])
+                || isset($dikonfirmasiByJadwalDate[$kKey]);
+            if ($isRealized) {
+                $konkretSelesaiCount++;
+                $jamKonkret += $durasiJamJadwal($jk);
+            }
+        }
+
+        $elapsedPolaOccurrences = $this->occurrenceService
+            ->expandElapsedOccurrences($jadwalPolaMingguan, $dari, $sampai)
+            ->filter(function (array $occ) use ($instruktur, $nonHadirByJadwalDate, $nonHadirUmumByDate, $tidakTerlaksanaByJadwalDate): bool {
+                /** @var Jadwal $jp */
+                $jp   = $occ['jadwal'];
+                $tglP = $occ['tanggal'];
+                $pKey = $jp->id . '|' . $tglP;
+
+                if ($instruktur->sedangCutiAtauIzinPada($tglP, $jp->hari)) {
+                    return false;
+                }
+                if (isset($nonHadirByJadwalDate[$pKey]) || isset($nonHadirUmumByDate[$tglP]) || isset($tidakTerlaksanaByJadwalDate[$pKey])) {
+                    return false;
+                }
+
+                return true;
+            });
+
+        $polaRealizedDates = [];
+        $jamPola = 0.0;
+        foreach ($elapsedPolaOccurrences as $occ) {
+            /** @var Jadwal $jp */
+            $jp   = $occ['jadwal'];
+            $pKey = $jp->id . '|' . $occ['tanggal'];
+            $polaRealizedDates[$pKey] = true;
+            $jamPola += $durasiJamJadwal($jp);
+        }
+
+        // Sertakan sesi mingguan hari ini yang sedang berlangsung namun sudah check-in atau dikonfirmasi jurnalnya
+        foreach ($jadwalPolaMingguan as $jp) {
+            $todayStr = today()->toDateString();
+            if ($todayStr >= $dari && $todayStr <= $sampai && $jp->berlakuPadaTanggal($todayStr)) {
+                $pKey = $jp->id . '|' . $todayStr;
+                if (! isset($polaRealizedDates[$pKey]) && (isset($hadirByJadwalDate[$pKey]) || isset($dikonfirmasiByJadwalDate[$pKey]))) {
+                    $polaRealizedDates[$pKey] = true;
+                    $jamPola += $durasiJamJadwal($jp);
+                }
+            }
+        }
+
+        $totalJadwalSelesai = $konkretSelesaiCount + count($polaRealizedDates);
+        $totalJamMengajar   = round($jamKonkret + $jamPola, 1);
 
         $aktivitasTerlapor          = $aktivitasDedup->where('status_konfirmasi', '!=', 'belum_dikonfirmasi');
         $totalCatatanAktivitas      = $aktivitasTerlapor->count();
@@ -242,9 +387,12 @@ class KinerjaCalculationService
         $totalAktivitasDiverifikasi = $aktivitasTerlapor->where('status_verifikasi', 'diverifikasi')->count();
         $totalAktivitasRevisi       = $aktivitasTerlapor->where('status_verifikasi', 'perlu_revisi')->count();
 
-        $elapsedOccurrences    = $this->occurrenceService->expandElapsedOccurrences($jadwals, $dari, $sampai);
+        $elapsedOccurrences = $this->occurrenceService
+            ->expandElapsedOccurrences($jadwalAktif, $dari, $sampai)
+            ->reject(fn (array $occ) => $instruktur->sedangCutiAtauIzinPada($occ['tanggal'], $occ['jadwal']->hari))
+            ->values();
         $missingAktivitasCount = $this->occurrenceService
-            ->getMissingActivityOccurrences($jadwals, $aktivitasTerlapor, $dari, $sampai)
+            ->getMissingActivityOccurrences($jadwalAktif, $aktivitasTerlapor, $dari, $sampai)
             ->count();
 
         $basisSesiAktivitas = max(
@@ -257,9 +405,10 @@ class KinerjaCalculationService
         $skorAktivitas = $persentaseAktivitas;
 
         // 3. Komponen Evaluasi Peserta (Nilai Asli Skala 1-5 & Skor Konversi 0-100)
-        $totalEvaluasi = $evaluasis->count();
-        $avgEvaluasi   = $totalEvaluasi > 0 ? $evaluasis->avg('total_nilai') : null;
-        $rataRataNilai = $avgEvaluasi !== null
+        $totalEvaluasi   = $evaluasis->count();
+        $scoredEvaluasis = $evaluasis->whereNotNull('total_nilai');
+        $avgEvaluasi     = $scoredEvaluasis->isNotEmpty() ? $scoredEvaluasis->avg('total_nilai') : null;
+        $rataRataNilai   = $avgEvaluasi !== null
             ? round((float) $avgEvaluasi, 2)
             : null;
 
@@ -434,13 +583,36 @@ class KinerjaCalculationService
     }
 
     protected static array $memoEvaluateAll = [];
+    protected static ?string $memoContextId = null;
+
+    protected static function ensureFreshRequestContext(): void
+    {
+        $appObj = app();
+        $reqId  = $appObj->bound('request') ? (string) spl_object_id($appObj->make('request')) : 'cli';
+        $ctxId  = spl_object_id($appObj) . ':' . $reqId;
+
+        if (static::$memoContextId !== $ctxId) {
+            static::$memoContextId   = $ctxId;
+            static::$memoEvaluateAll = [];
+        }
+    }
 
     /**
      * Evaluasi daftar instruktur sekaligus untuk rentang tanggal tertentu.
      */
-    public function evaluateAll(string $dari, string $sampai, ?string $instrukturId = null, ?string $statusFilter = null): Collection
-    {
-        $memoKey = "{$dari}|{$sampai}|" . ($instrukturId ?: 'all') . '|' . ($statusFilter ?: 'all');
+    public function evaluateAll(
+        string $dari,
+        string $sampai,
+        ?string $instrukturId = null,
+        ?string $statusFilter = null,
+        ?Kelas $selectedKelas = null,
+        bool $includeHistorical = false
+    ): Collection {
+        static::ensureFreshRequestContext();
+
+        $kelasKey = $selectedKelas ? (string) $selectedKelas->id : 'all';
+        $histKey  = $includeHistorical ? 'hist' : 'aktif';
+        $memoKey  = "{$dari}|{$sampai}|" . ($instrukturId ?: 'all') . '|' . ($statusFilter ?: 'all') . "|{$kelasKey}|{$histKey}";
         if (isset(static::$memoEvaluateAll[$memoKey])) {
             return static::$memoEvaluateAll[$memoKey];
         }
@@ -449,19 +621,42 @@ class KinerjaCalculationService
             ? $statusFilter
             : null;
 
-        $rows = Instruktur::aktif()
+        $sampaiEnd = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
+
+        $baseInstrukturQuery = $includeHistorical
+            ? Instruktur::withTrashed()->where(function (Builder $q) use ($dari, $sampai, $sampaiEnd, $instrukturId) {
+                $q->where(fn (Builder $sub) => $sub->whereNull('deleted_at')->where('status', 'aktif'))
+                    ->orWhereHas('jadwals', fn (Builder $jq) => $jq->periode($dari, $sampai))
+                    ->orWhereHas('absensis', fn (Builder $aq) => $aq->whereBetween('tanggal', [$dari, $sampaiEnd]))
+                    ->orWhereHas('aktivitasMengajars', fn (Builder $kq) => $kq->whereBetween('tanggal', [$dari, $sampaiEnd]))
+                    ->orWhereHas('evaluasis', fn (Builder $eq) => $eq->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']))
+                    ->orWhereHas('observasiSupervisors', fn (Builder $oq) => $oq->whereBetween('tanggal', [$dari, $sampaiEnd]));
+                if ($instrukturId && $instrukturId !== 'all') {
+                    $q->orWhere('id', $instrukturId);
+                }
+            })
+            : Instruktur::aktif();
+
+        $instrukturList = $baseInstrukturQuery
             ->when($instrukturId && $instrukturId !== 'all', fn ($q) => $q->where('id', $instrukturId))
-            ->with([
-                'absensis'             => fn ($q) => $q->whereBetween('tanggal', [$dari, $sampai]),
-                'evaluasis'            => fn ($q) => $q->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']),
-                'jadwals'              => fn ($q) => $q->periode($dari, $sampai)
-                    ->when($statusFilter && in_array($statusFilter, ['terjadwal', 'berlangsung', 'selesai', 'dibatalkan'], true), fn ($sq) => $sq->where('status', $statusFilter)),
-                'aktivitasMengajars'   => fn ($q) => $q->whereBetween('tanggal', [$dari, $sampai]),
-                'observasiSupervisors' => fn ($q) => $q->whereBetween('tanggal', [$dari, $sampai]),
-            ])
+            ->with(
+                $selectedKelas !== null
+                    ? ['cutis']
+                    : [
+                        'cutis',
+                        'absensis'             => fn ($q) => $q->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd]),
+                        'evaluasis'            => fn ($q) => $q->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']),
+                        'jadwals'              => fn ($q) => $q->periode($dari, $sampai)
+                            ->when($statusFilter && in_array($statusFilter, ['terjadwal', 'berlangsung', 'selesai', 'dibatalkan'], true), fn ($sq) => $sq->where('status', $statusFilter)),
+                        'aktivitasMengajars'   => fn ($q) => $q->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd]),
+                        'observasiSupervisors' => fn ($q) => $q->whereBetween('tanggal', [$dari, $sampaiEnd]),
+                    ]
+            )
             ->orderBy('nama_lengkap')
-            ->get()
-            ->map(fn (Instruktur $inst) => $this->evaluateInstruktur($inst, $dari, $sampai));
+            ->get();
+
+        $rows = $instrukturList
+            ->map(fn (Instruktur $inst) => $this->evaluateInstruktur($inst, $dari, $sampai, $selectedKelas));
 
         if ($activeAttendanceStatus !== null) {
             $statusLabelMap = [

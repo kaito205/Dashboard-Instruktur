@@ -12,7 +12,7 @@ class StoreInstrukturRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        if (! auth()->check()) {
+        if (! auth()->check() || ! auth()->user()->isAdmin()) {
             return false;
         }
 
@@ -40,6 +40,14 @@ class StoreInstrukturRequest extends FormRequest
             ]);
         }
 
+        if ($this->input('status_ketersediaan', 'tersedia') === 'tersedia') {
+            $this->merge([
+                'cuti_mulai'      => null,
+                'cuti_selesai'    => null,
+                'keterangan_cuti' => null,
+            ]);
+        }
+
         if (! $isUpdate) {
             $akunMode = $this->filled('akun_mode') ? (string) $this->input('akun_mode') : 'auto';
             $payload  = ['akun_mode' => $akunMode];
@@ -58,6 +66,12 @@ class StoreInstrukturRequest extends FormRequest
         $instrukturId = $routeParam instanceof Instruktur ? $routeParam->id : $routeParam;
         $isUpdate     = $instrukturId !== null;
         $akunMode     = (string) $this->input('akun_mode', 'auto');
+        $isCutiOrIzin = in_array((string) $this->input('status_ketersediaan'), ['cuti', 'izin'], true);
+
+        $cutiSelesaiRules = ['nullable', 'date'];
+        if ($this->filled('cuti_mulai')) {
+            $cutiSelesaiRules[] = 'after_or_equal:cuti_mulai';
+        }
 
         return [
             'nama_lengkap'               => ['required', 'string', 'max:100'],
@@ -78,8 +92,8 @@ class StoreInstrukturRequest extends FormRequest
             'sertifikasi_berlaku_sampai' => ['nullable', 'date'],
             'status'                     => ['required', 'in:aktif,nonaktif'],
             'status_ketersediaan'        => ['nullable', 'in:tersedia,cuti,izin'],
-            'cuti_mulai'                 => ['nullable', 'date'],
-            'cuti_selesai'               => ['nullable', 'date', 'after_or_equal:cuti_mulai'],
+            'cuti_mulai'                 => [$isCutiOrIzin ? 'required' : 'nullable', 'date'],
+            'cuti_selesai'               => $cutiSelesaiRules,
             'keterangan_cuti'            => ['nullable', 'string', 'max:255'],
             'keterangan'                 => ['nullable', 'string', 'max:500'],
             'foto_profil'                => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
@@ -164,6 +178,7 @@ class StoreInstrukturRequest extends FormRequest
             'kode_instruktur.regex'       => 'Kode instruktur hanya boleh berisi huruf kapital, angka, dan tanda hubung.',
             'email.email'                 => 'Format email tidak valid.',
             'status.required'             => 'Status wajib dipilih.',
+            'cuti_mulai.required'         => 'Tanggal mulai cuti/izin wajib diisi saat status ketersediaan Cuti atau Izin.',
             'cuti_selesai.after_or_equal' => 'Tanggal selesai cuti/izin harus sama atau setelah tanggal mulai.',
             'file_sertifikasi.mimes'      => 'Dokumen sertifikasi harus berformat PDF, JPG, PNG, atau WebP.',
             'file_sertifikasi.max'        => 'Ukuran dokumen sertifikasi maksimal 5MB.',

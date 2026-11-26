@@ -20,6 +20,7 @@ class OperationalAlertService
      */
     protected static array $memo = [];
     protected static array $latestByPrefix = [];
+    protected static ?string $memoContextId = null;
 
     private readonly JadwalOccurrenceService $occurrenceService;
 
@@ -36,6 +37,18 @@ class OperationalAlertService
         static::$latestByPrefix = [];
     }
 
+    protected static function ensureFreshRequestContext(): void
+    {
+        $appObj = app();
+        $reqId  = $appObj->bound('request') ? (string) spl_object_id($appObj->make('request')) : 'cli';
+        $ctxId  = spl_object_id($appObj) . ':' . $reqId;
+
+        if (static::$memoContextId !== $ctxId) {
+            static::$memoContextId = $ctxId;
+            static::clearMemo();
+        }
+    }
+
     // Mengumpulkan peringatan operasional faktual untuk Dashboard dan Pusat Notifikasi serta menyaring item yang sudah ditinjau.
     public function getSummaryAlerts(
         ?string $dari = null,
@@ -43,6 +56,8 @@ class OperationalAlertService
         ?string $role = 'admin',
         ?int $userId = null
     ): array {
+        static::ensureFreshRequestContext();
+
         if ($role === 'instruktur') {
             return $this->getInstrukturAlerts($userId ?? auth()->id());
         }
@@ -64,17 +79,51 @@ class OperationalAlertService
         }
 
         // 1. Kelas tanpa laporan aktivitas mengajar & Eskalasi > 2x24 jam (48 jam)
-        $batasEskalasi = now()->subHours(48);
-        $aktivitasBelumDikonfirmasiAll = AktivitasMengajar::with(['instruktur', 'jadwal'])
+        $sekarang      = now();
+        $batasEskalasi = $sekarang->copy()->subHours(48);
+        $sampaiEnd     = str_contains($sampai, ':') ? $sampai : ($sampai . ' 23:59:59');
+        $aktivitasBelumDikonfirmasiRaw = AktivitasMengajar::with(['instruktur.cutis', 'jadwal'])
             ->where('status_konfirmasi', 'belum_dikonfirmasi')
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
+            ->where(function ($q) {
+                $q->whereNull('jadwal_id')
+                    ->orWhereHas('jadwal', fn ($jq) => $jq->where('status', '!=', 'dibatalkan'));
+            })
             ->orderBy('tanggal')
-            ->limit(20)
             ->get()
-            ->map(function (AktivitasMengajar $akt) use ($batasEskalasi) {
+            ->filter(function (AktivitasMengajar $akt) use ($sekarang): bool {
+                if (! $akt->tanggal) {
+                    return false;
+                }
+                if ($akt->jadwal && ! $akt->jadwal->berlakuPadaTanggal($akt->tanggal)) {
+                    return false;
+                }
                 $jamSelesai = $akt->jadwal?->jam_selesai ? substr((string) $akt->jadwal->jam_selesai, 0, 5) : '17:00';
                 $waktuSesi  = Carbon::parse($akt->tanggal->toDateString() . ' ' . $jamSelesai);
+                if ($waktuSesi->gte($sekarang)) {
+                    return false;
+                }
+                if ($akt->instruktur?->sedangCutiAtauIzinPada($akt->tanggal->toDateString(), $akt->jadwal?->hari)) {
+                    return false;
+                }
+
+                return true;
+            })
+            ->unique(fn (AktivitasMengajar $akt) => ($akt->jadwal_id ?? '0') . '|' . $akt->tanggal->toDateString())
+            ->values();
+
+        $seenJadwalTanggal = [];
+        $aktivitasBelumDikonfirmasiAll = $aktivitasBelumDikonfirmasiRaw
+            ->map(function (AktivitasMengajar $akt) use ($batasEskalasi, $sekarang, &$seenJadwalTanggal) {
+                $tglRaw = $akt->tanggal->toDateString();
+                if ($akt->jadwal_id !== null) {
+                    $seenJadwalTanggal[$akt->jadwal_id . '|' . $tglRaw] = true;
+                }
+
+                $jamSelesai = $akt->jadwal?->jam_selesai ? substr((string) $akt->jadwal->jam_selesai, 0, 5) : '17:00';
+                $waktuSesi  = Carbon::parse($tglRaw . ' ' . $jamSelesai);
                 $isEskalasi = $waktuSesi->lte($batasEskalasi);
-                $jamLewat   = max(0, (int) $waktuSesi->diffInHours(now(), false));
+                $jamLewat   = max(0, (int) $waktuSesi->diffInHours($sekarang, false));
                 $hariLewat  = max(0, (int) $akt->tanggal->copy()->startOfDay()->diffInDays(today(), false));
                 $kodeKelas  = $akt->jadwal?->kode_kelas ?: ($akt->jadwal?->nama_kelas ?? '-');
 
@@ -88,7 +137,7 @@ class OperationalAlertService
                     'kode_kelas'    => $kodeKelas,
                     'materi'        => $akt->materi_disampaikan ?? $akt->jadwal?->materi ?? '-',
                     'tanggal'       => $akt->tanggal->format('d/m/Y'),
-                    'tanggal_raw'   => $akt->tanggal->toDateString(),
+                    'tanggal_raw'   => $tglRaw,
                     'jam_lewat'     => $jamLewat,
                     'hari_lewat'    => $hariLewat,
                     'is_eskalasi'   => $isEskalasi,
@@ -96,23 +145,30 @@ class OperationalAlertService
                 ];
             });
 
-        $jadwalsPeriode = Jadwal::with('instruktur')
+        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
             ->where('status', '!=', 'dibatalkan')
             ->periode($dari, $sampai)
             ->get();
 
-        $aktivitasPeriode = AktivitasMengajar::whereBetween('tanggal', [$dari, $sampai])
+        $aktivitasPeriode = AktivitasMengajar::whereBetween('tanggal', [$dari, $sampaiEnd])
             ->get(['id', 'jadwal_id', 'tanggal', 'status_konfirmasi']);
 
         $missingAktivitasAlerts = $this->occurrenceService
-            ->getMissingActivityOccurrences($jadwalsPeriode, $aktivitasPeriode, $dari, $sampai)
-            ->map(function (array $occ) use ($batasEskalasi) {
+            ->getMissingActivityOccurrences($jadwalsPeriode, $aktivitasPeriode, $dari, $sampai, $sekarang)
+            ->reject(function (array $occ) use ($seenJadwalTanggal): bool {
+                /** @var Jadwal $jadwal */
+                $jadwal = $occ['jadwal'];
+                $tgl    = $occ['tanggal'];
+
+                return isset($seenJadwalTanggal[$jadwal->id . '|' . $tgl]);
+            })
+            ->map(function (array $occ) use ($batasEskalasi, $sekarang) {
                 /** @var Jadwal $jadwal */
                 $jadwal     = $occ['jadwal'];
                 $tgl        = $occ['tanggal'];
                 $waktuSesi  = $occ['waktu_selesai'];
                 $isEskalasi = $waktuSesi->lte($batasEskalasi);
-                $jamLewat   = max(0, (int) $waktuSesi->diffInHours(now(), false));
+                $jamLewat   = max(0, (int) $waktuSesi->diffInHours($sekarang, false));
                 $hariLewat  = max(0, (int) Carbon::parse($tgl)->startOfDay()->diffInDays(today(), false));
                 $kodeKelas  = $jadwal->kode_kelas ?: ($jadwal->nama_kelas ?? '-');
 
@@ -351,8 +407,9 @@ class OperationalAlertService
             ->values();
         $allCurrentByKey = $allCurrentItems->keyBy('alert_key');
 
-        $reviewedRecords = $this->getReviewedRecords($resolvedUserId, $prefix);
-        $reviewedKeys    = $reviewedRecords->pluck('alert_key')->flip();
+        $reviewedRecords    = $this->getReviewedRecords($resolvedUserId, $prefix);
+        $reviewedKeys       = $this->getAllReviewedKeyMap($resolvedUserId, $prefix);
+        $totalRiwayatUnique = $reviewedKeys->count();
 
         $itemsFaktualPerluTinjauan = $allCurrentItems
             ->filter(fn (array $item) => in_array($item['level'] ?? '', ['critical', 'warning'], true))
@@ -429,7 +486,7 @@ class OperationalAlertService
             'total_faktual_peringatan'       => $itemsFaktualPerluTinjauan->count(),
             'total_faktual_info'             => $itemsFaktualInfo->count(),
             'total_faktual_semua'            => $allCurrentItems->count(),
-            'total_riwayat'                  => $itemsRiwayat->count(),
+            'total_riwayat'                  => $totalRiwayatUnique,
         ];
 
         static::$memo[$memoKey] = $result;
@@ -519,6 +576,8 @@ class OperationalAlertService
 
     private function getInstrukturAlerts(?int $userId): array
     {
+        static::ensureFreshRequestContext();
+
         $memoKey = 'instruktur|' . ($userId ?? 0);
         if (isset(static::$memo[$memoKey])) {
             return static::$memo[$memoKey];
@@ -596,15 +655,45 @@ class OperationalAlertService
             ];
         }
 
-        // 3. Jurnal Aktivitas Belum Dikonfirmasi
+        // 3. Jurnal Aktivitas Belum Dikonfirmasi (hanya sesi yang sudah lewat jam selesainya)
+        $sekarangIns = now();
+        $instruktur->loadMissing('cutis');
         $belumJurnal = AktivitasMengajar::with('jadwal')
             ->where('instruktur_id', $instruktur->id)
             ->where('status_konfirmasi', 'belum_dikonfirmasi')
+            ->where(function ($q) {
+                $q->whereNull('jadwal_id')
+                    ->orWhereHas('jadwal', fn ($jq) => $jq->where('status', '!=', 'dibatalkan'));
+            })
             ->orderBy('tanggal')
-            ->limit(10)
-            ->get();
+            ->get()
+            ->filter(function (AktivitasMengajar $akt) use ($sekarangIns, $instruktur): bool {
+                if (! $akt->tanggal) {
+                    return false;
+                }
+                if ($akt->jadwal && ! $akt->jadwal->berlakuPadaTanggal($akt->tanggal)) {
+                    return false;
+                }
+                $jamSelesai = $akt->jadwal?->jam_selesai ? substr((string) $akt->jadwal->jam_selesai, 0, 5) : '17:00';
+                $waktuSesi  = Carbon::parse($akt->tanggal->toDateString() . ' ' . $jamSelesai);
+                if ($waktuSesi->gte($sekarangIns)) {
+                    return false;
+                }
+                if ($instruktur->sedangCutiAtauIzinPada($akt->tanggal->toDateString(), $akt->jadwal?->hari)) {
+                    return false;
+                }
 
+                return true;
+            })
+            ->unique(fn (AktivitasMengajar $akt) => ($akt->jadwal_id ?? '0') . '|' . $akt->tanggal->toDateString())
+            ->take(10)
+            ->values();
+
+        $seenInsJadwalTanggal = [];
         foreach ($belumJurnal as $akt) {
+            if ($akt->jadwal_id && $akt->tanggal) {
+                $seenInsJadwalTanggal[$akt->jadwal_id . '|' . $akt->tanggal->toDateString()] = true;
+            }
             $kelas     = $akt->jadwal?->nama_kelas ?? 'Kelas';
             $ringkasan = 'Segera lengkapi laporan materi dan kehadiran peserta untuk sesi ini.';
             $rawItems[] = [
@@ -615,15 +704,56 @@ class OperationalAlertService
                 'judul'         => "Belum Isi Jurnal - {$kelas}",
                 'ringkasan'     => $ringkasan,
                 'deskripsi'     => $ringkasan,
-                'url'           => route('instruktur.aktivitas.index') . '#jadwal-' . $akt->jadwal_id,
+                'url'           => route('instruktur.aktivitas.index', array_filter([
+                    'jadwal_id' => $akt->jadwal_id,
+                    'tanggal'   => $akt->tanggal?->toDateString(),
+                ])),
                 'cta_label'     => 'Isi Jurnal',
                 'waktu'         => $akt->tanggal?->format('d/m/Y') ?? '-',
+            ];
+        }
+
+        $awalBulanIns  = $sekarangIns->copy()->startOfMonth()->toDateString();
+        $akhirBulanIns = $sekarangIns->copy()->endOfMonth()->toDateString();
+        $jadwalsInsBulan = Jadwal::where('instruktur_id', $instruktur->id)
+            ->where('status', '!=', 'dibatalkan')
+            ->periode($awalBulanIns, $akhirBulanIns)
+            ->get();
+        $jadwalsInsBulan->each(fn (Jadwal $j) => $j->setRelation('instruktur', $instruktur));
+
+        $aktInsBulan = AktivitasMengajar::where('instruktur_id', $instruktur->id)
+            ->whereBetween('tanggal', [$awalBulanIns, $akhirBulanIns . ' 23:59:59'])
+            ->get(['id', 'jadwal_id', 'tanggal', 'status_konfirmasi']);
+
+        $missingInsOccurrences = $this->occurrenceService
+            ->getMissingActivityOccurrences($jadwalsInsBulan, $aktInsBulan, $awalBulanIns, $akhirBulanIns, $sekarangIns)
+            ->reject(fn (array $occ) => isset($seenInsJadwalTanggal[$occ['jadwal']->id . '|' . $occ['tanggal']]))
+            ->take(max(0, 10 - count($seenInsJadwalTanggal)));
+
+        foreach ($missingInsOccurrences as $occ) {
+            /** @var Jadwal $jMiss */
+            $jMiss     = $occ['jadwal'];
+            $tglMiss   = $occ['tanggal'];
+            $kelas     = $jMiss->nama_kelas ?? 'Kelas';
+            $ringkasan = 'Segera lengkapi laporan materi dan kehadiran peserta untuk sesi ini.';
+            $rawItems[] = [
+                'alert_key'     => "instruktur_jadwal_tanpa_jurnal:{$jMiss->id}:{$tglMiss}",
+                'instruktur_id' => $instruktur->id,
+                'kategori'      => 'Jurnal',
+                'level'         => 'warning',
+                'judul'         => "Belum Isi Jurnal - {$kelas}",
+                'ringkasan'     => $ringkasan,
+                'deskripsi'     => $ringkasan,
+                'url'           => route('instruktur.aktivitas.index', ['jadwal_id' => $jMiss->id, 'tanggal' => $tglMiss]),
+                'cta_label'     => 'Isi Jurnal',
+                'waktu'         => Carbon::parse($tglMiss)->format('d/m/Y'),
             ];
         }
 
         // 4. Pengingat Jadwal Mengajar Hari Ini
         $jadwalHariIni = Jadwal::hariIni()
             ->where('instruktur_id', $instruktur->id)
+            ->where('status', '!=', 'dibatalkan')
             ->orderBy('jam_mulai')
             ->get();
 
@@ -689,7 +819,7 @@ class OperationalAlertService
                     ->orWhereNotNull('instruktur_pengganti_id');
             })
             ->where(function ($q) use ($awalBulan, $akhirBulan) {
-                $q->whereBetween('tanggal', [$awalBulan, $akhirBulan])
+                $q->whereBetween('tanggal', [$awalBulan, $akhirBulan . ' 23:59:59'])
                     ->orWhere('is_pola_mingguan', true);
             })
             ->orderByDesc('updated_at')
@@ -744,11 +874,11 @@ class OperationalAlertService
             }
         }
 
-        $reviewedRecords = $this->getReviewedRecords($userId);
-        $reviewedKeys    = $reviewedRecords->pluck('alert_key')->all();
+        $reviewedRecords    = $this->getReviewedRecords($userId, 'instruktur');
+        $reviewedKeyMap     = $this->getAllReviewedKeyMap($userId, 'instruktur');
 
         $itemsAktif = collect($rawItems)
-            ->reject(fn (array $item) => in_array($item['alert_key'], $reviewedKeys, true))
+            ->reject(fn (array $item) => $reviewedKeyMap->has($item['alert_key']))
             ->values();
 
         $itemsRiwayat = $reviewedRecords->map(function (NotifikasiTinjauan $rec) {
@@ -763,13 +893,22 @@ class OperationalAlertService
             ];
         })->values();
 
+        $itemsPerluTinjauanIns = $itemsAktif
+            ->filter(fn (array $item) => in_array($item['level'] ?? '', ['critical', 'warning'], true))
+            ->values();
+        $itemsInfoIns = $itemsAktif
+            ->filter(fn (array $item) => ($item['level'] ?? '') === 'info')
+            ->values();
+
         $result = [
-            'total_peringatan' => $itemsAktif->count(),
-            'total_aktif'      => $itemsAktif->count(),
-            'total_riwayat'    => $itemsRiwayat->count(),
-            'feed'             => $itemsAktif->take(10)->values()->all(),
-            'items_aktif'      => $itemsAktif,
-            'items_riwayat'    => $itemsRiwayat,
+            'total_peringatan'  => $itemsPerluTinjauanIns->count(),
+            'total_info'        => $itemsInfoIns->count(),
+            'total_semua_aktif' => $itemsAktif->count(),
+            'total_aktif'       => $itemsAktif->count(),
+            'total_riwayat'     => $reviewedKeyMap->count(),
+            'feed'              => $itemsAktif->take(10)->values()->all(),
+            'items_aktif'       => $itemsAktif,
+            'items_riwayat'     => $itemsRiwayat,
         ];
 
         return static::$memo[$memoKey] = $result;
@@ -888,6 +1027,23 @@ class OperationalAlertService
         return $sharedIds;
     }
 
+    private function getAllReviewedKeyMap(?int $userId, ?string $role = null): Collection
+    {
+        if (! $userId || ! Schema::hasTable('notifikasi_tinjauans')) {
+            return collect();
+        }
+
+        $userIds = $this->resolveSharedOperationalUserIds($userId, $role);
+        if (empty($userIds)) {
+            return collect();
+        }
+
+        return NotifikasiTinjauan::whereIn('user_id', $userIds)
+            ->distinct()
+            ->pluck('alert_key')
+            ->flip();
+    }
+
     private function getReviewedRecords(?int $userId, ?string $role = null): Collection
     {
         if (! $userId || ! Schema::hasTable('notifikasi_tinjauans')) {
@@ -901,7 +1057,7 @@ class OperationalAlertService
 
         return NotifikasiTinjauan::whereIn('user_id', $userIds)
             ->orderByDesc('ditinjau_pada')
-            ->limit(150)
+            ->limit(500)
             ->get()
             ->unique('alert_key')
             ->values();

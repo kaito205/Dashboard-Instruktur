@@ -103,7 +103,7 @@
                 </div>
                 <div class="bg-white p-4 dark:bg-gray-900">
                     <p class="text-xs text-gray-600 dark:text-gray-300">Evaluasi ({{ $statsEvaluasi['total'] ?? 0 }})</p>
-                    <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ ($statsEvaluasi['total'] ?? 0) > 0 ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
+                    <p class="mt-1 font-mono text-2xl font-bold text-slate-900 dark:text-white">{{ ($statsEvaluasi['rata_rata'] ?? null) !== null ? number_format($statsEvaluasi['rata_rata'], 2) : '-' }}</p>
                 </div>
             </div>
         </div>

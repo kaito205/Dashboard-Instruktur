@@ -15,9 +15,24 @@ class Setting extends Model
      * Penyimpanan memo di memori per-request agar tidak memicu query berulang ke tabel cache/database.
      */
     protected static ?array $memoizedSettings = null;
+    protected static ?string $memoContextId = null;
+
+    protected static function ensureFreshRequestContext(): void
+    {
+        $appObj = app();
+        $reqId  = $appObj->bound('request') ? (string) spl_object_id($appObj->make('request')) : 'cli';
+        $ctxId  = spl_object_id($appObj) . ':' . $reqId;
+
+        if (static::$memoContextId !== $ctxId) {
+            static::$memoContextId    = $ctxId;
+            static::$memoizedSettings = null;
+        }
+    }
 
     public static function get(string $key, $default = null): mixed
     {
+        static::ensureFreshRequestContext();
+
         if (static::$memoizedSettings === null) {
             try {
                 static::$memoizedSettings = static::query()->pluck('value', 'key')->all();

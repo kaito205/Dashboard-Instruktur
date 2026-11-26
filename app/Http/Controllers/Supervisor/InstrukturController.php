@@ -49,24 +49,36 @@ class InstrukturController extends Controller
 
         $instruktur->load([
             'user',
+            'cutis',
             'sertifikasis',
-            'jadwals'            => fn ($q) => $q->latest('tanggal')->take(10),
+            'jadwals'            => fn ($q) => $q->orderByRaw('CASE WHEN is_pola_mingguan = 1 THEN 0 ELSE 1 END')->latest('tanggal')->take(10),
             'aktivitasMengajars' => fn ($q) => $q->with('jadwal.kelas')->latest('tanggal')->take(10),
             'kodeEvaluasis'      => fn ($q) => $q->withCount('evaluasis')->latest(),
         ]);
 
-        $dari   = now()->subDays(30)->toDateString();
-        $sampai = now()->toDateString();
+        $dari      = now()->subDays(30)->toDateString();
+        $sampai    = now()->toDateString();
+        $sampaiEnd = $sampai . ' 23:59:59';
 
-        $statsAbsensi = $instruktur->absensis()
-            ->whereBetween('tanggal', [$dari, $sampai])
-            ->selectRaw('status, COUNT(*) as total')
-            ->groupBy('status')
-            ->pluck('total', 'status');
+        $occurrenceService = new \App\Services\JadwalOccurrenceService();
+        $validAbsensis = $occurrenceService->filterValidAttendanceRecords(
+            $instruktur->absensis()->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd])->get()
+        );
+        $jadwals30 = $instruktur->jadwals()->where('status', '!=', 'dibatalkan')->periode($dari, $sampai)->get();
+        $jadwals30->each(fn ($j) => $j->setRelation('instruktur', $instruktur));
+        $missed30 = $occurrenceService->getMissedAttendanceOccurrences($jadwals30, $validAbsensis, $dari, $sampai)->count();
 
+        $statsAbsensi = collect([
+            'hadir'       => $validAbsensis->where('status', 'hadir')->count(),
+            'terlambat'   => $validAbsensis->where('status', 'terlambat')->count(),
+            'izin'        => $validAbsensis->whereIn('status', ['izin', 'sakit'])->count(),
+            'tidak_hadir' => $validAbsensis->whereIn('status', ['tidak_hadir', 'alpha'])->count() + $missed30,
+        ]);
+
+        $avgEval = $instruktur->evaluasis()->whereNotNull('total_nilai')->avg('total_nilai');
         $statsEvaluasi = [
             'total'     => $instruktur->evaluasis()->count(),
-            'rata_rata' => round($instruktur->evaluasis()->avg('total_nilai') ?? 0, 2),
+            'rata_rata' => $avgEval !== null ? round((float) $avgEval, 2) : null,
         ];
 
         $kinerjaSummary = $this->kinerjaService->evaluateInstruktur(

@@ -57,8 +57,13 @@ class AuthController extends Controller
                 ->withErrors(['email' => "Terlalu banyak percobaan login. Coba lagi dalam {$seconds} detik."]);
         }
 
-        $credentials = $request->only('email', 'password');
-        $remember    = $request->boolean('remember');
+        $emailNormalized = mb_strtolower(trim((string) $request->email));
+        $matchedUser     = \App\Models\User::whereRaw('LOWER(email) = ?', [$emailNormalized])->first();
+        $credentials     = [
+            'email'    => $matchedUser ? $matchedUser->email : $emailNormalized,
+            'password' => $request->password,
+        ];
+        $remember = $request->boolean('remember');
 
         if (!Auth::attempt($credentials, $remember)) {
             RateLimiter::hit($key, 60);

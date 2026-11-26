@@ -54,7 +54,10 @@ class Absensi extends Model
 
     public function scopePeriode($query, $dari, $sampai)
     {
-        return $query->whereBetween('tanggal', [$dari, $sampai]);
+        $dariDate  = Carbon::parse($dari)->toDateString();
+        $sampaiEnd = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
+
+        return $query->whereBetween('tanggal', [$dariDate, $sampaiEnd]);
     }
 
     // Menghitung menit keterlambatan dan status hadir/terlambat berdasarkan jam mulai jadwal dan toleransi settings.
@@ -90,9 +93,11 @@ class Absensi extends Model
         $closedCount = 0;
 
         foreach ($openSessions as $absensi) {
-            $jamSelesai = $absensi->jadwal?->jam_selesai
+            $jamCheckinStr = substr((string) $absensi->jam_checkin, 0, 5);
+            $jamSelesaiRaw = $absensi->jadwal?->jam_selesai
                 ? substr((string) $absensi->jadwal->jam_selesai, 0, 5)
                 : '17:00';
+            $jamSelesai = $jamSelesaiRaw < $jamCheckinStr ? $jamCheckinStr : $jamSelesaiRaw;
 
             $batasWaktu = Carbon::parse($absensi->tanggal->toDateString() . ' ' . $jamSelesai)
                 ->addMinutes($toleransiSelesaiMenit ?? 30);

@@ -128,6 +128,10 @@ class PengaturanController extends Controller
         }
 
         $user->update(['password' => Hash::make($request->password_baru)]);
+        $user->revokeOtherSessions(
+            $request->hasSession() ? $request->session()->getId() : null,
+            $request->password_baru
+        );
 
         return back()->with('success', 'Password keamanan akun berhasil diperbarui.');
     }
@@ -147,9 +151,9 @@ class PengaturanController extends Controller
             'bobot_aktivitas'            => ['required', 'numeric', 'min:0', 'max:100'],
             'bobot_evaluasi'             => ['required', 'numeric', 'min:0', 'max:100'],
             'bobot_observasi'            => ['required', 'numeric', 'min:0', 'max:100'],
-            'batas_sangat_baik'          => ['required', 'numeric', 'min:1', 'max:100'],
-            'batas_baik'                 => ['required', 'numeric', 'min:1', 'lt:batas_sangat_baik'],
-            'batas_cukup'                => ['required', 'numeric', 'min:1', 'lt:batas_baik'],
+            'batas_sangat_baik'          => ['bail', 'required', 'numeric', 'min:1', 'max:100'],
+            'batas_baik'                 => ['bail', 'required', 'numeric', 'min:1', 'lt:batas_sangat_baik'],
+            'batas_cukup'                => ['bail', 'required', 'numeric', 'min:1', 'lt:batas_baik'],
             'toleransi_terlambat_menit'  => ['required', 'integer', 'min:0', 'max:180'],
             'checkin_buka_sebelum_menit' => ['required', 'integer', 'min:0', 'max:240'],
             'lpk_latitude'               => ['required', 'numeric', 'between:-90,90'],

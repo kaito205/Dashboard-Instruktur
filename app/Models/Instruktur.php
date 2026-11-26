@@ -7,11 +7,19 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 class Instruktur extends Model
 {
     use SoftDeletes;
+
+    protected static function booted(): void
+    {
+        static::saved(function (self $instruktur): void {
+            $instruktur->syncRiwayatCuti();
+        });
+    }
 
     protected $fillable = [
         'user_id',
@@ -48,7 +56,7 @@ class Instruktur extends Model
     public static function generateNextCode(): string
     {
         $max = 0;
-        $codes = static::withTrashed()->pluck('kode_instruktur');
+        $codes = static::withTrashed()->lockForUpdate()->pluck('kode_instruktur');
 
         foreach ($codes as $code) {
             if (preg_match('/^INS-CTI(\d+)$/i', (string) $code, $matches)) {
@@ -60,7 +68,7 @@ class Instruktur extends Model
         do {
             $kode = 'INS-CTI' . str_pad((string) $nextNumber, 2, '0', STR_PAD_LEFT);
             $nextNumber++;
-        } while (static::withTrashed()->where('kode_instruktur', $kode)->exists());
+        } while (static::withTrashed()->lockForUpdate()->where('kode_instruktur', $kode)->exists());
 
         return $kode;
     }
@@ -98,21 +106,60 @@ class Instruktur extends Model
         };
     }
 
-    // Menolak penjadwalan jika instruktur berstatus cuti/izin pada tanggal atau rentang periode sesi yang diplot.
+    // Menolak penjadwalan serta mengecualikan Alpa/jurnal kosong apabila tanggal berada dalam masa cuti/izin aktif maupun riwayat cuti.
     public function sedangCutiAtauIzinPada(
         ?string $tanggal = null,
         ?string $hari = null,
         ?string $periodeMulai = null,
         ?string $periodeSelesai = null
     ): bool {
+        $intervals = [];
+
         $ketersediaan = $this->status_ketersediaan ?? 'tersedia';
-        if (!in_array($ketersediaan, ['cuti', 'izin'], true)) {
+        if (in_array($ketersediaan, ['cuti', 'izin'], true)) {
+            $intervals[] = [
+                'start' => $this->cuti_mulai?->copy()->startOfDay(),
+                'end'   => $this->cuti_selesai?->copy()->startOfDay(),
+            ];
+        }
+
+        if ($this->exists && Schema::hasTable('instruktur_cutis')) {
+            $riwayatCutis = $this->relationLoaded('cutis')
+                ? $this->cutis
+                : $this->cutis()->get();
+
+            foreach ($riwayatCutis as $cuti) {
+                if (! $cuti->mulai_tanggal) {
+                    continue;
+                }
+                $intervals[] = [
+                    'start' => $cuti->mulai_tanggal->copy()->startOfDay(),
+                    'end'   => $cuti->selesai_tanggal?->copy()->startOfDay(),
+                ];
+            }
+        }
+
+        if ($intervals === []) {
             return false;
         }
 
-        $leaveStart = $this->cuti_mulai?->copy()->startOfDay();
-        $leaveEnd   = $this->cuti_selesai?->copy()->startOfDay();
+        foreach ($intervals as $interval) {
+            if ($this->intervalCutiBeririsan($interval['start'], $interval['end'], $tanggal, $hari, $periodeMulai, $periodeSelesai)) {
+                return true;
+            }
+        }
 
+        return false;
+    }
+
+    private function intervalCutiBeririsan(
+        ?Carbon $leaveStart,
+        ?Carbon $leaveEnd,
+        ?string $tanggal,
+        ?string $hari,
+        ?string $periodeMulai,
+        ?string $periodeSelesai
+    ): bool {
         if ($tanggal !== null && $tanggal !== '') {
             $target = Carbon::parse($tanggal)->startOfDay();
             if ($leaveStart && $target->lt($leaveStart)) {
@@ -163,6 +210,62 @@ class Instruktur extends Model
         }
 
         return true;
+    }
+
+    public function syncRiwayatCuti(): void
+    {
+        if (! $this->exists || ! Schema::hasTable('instruktur_cutis')) {
+            return;
+        }
+
+        $ketersediaan = $this->status_ketersediaan ?? 'tersedia';
+        $todayStr     = today()->toDateString();
+        $yesterdayStr = today()->subDay()->toDateString();
+
+        if (in_array($ketersediaan, ['cuti', 'izin'], true)) {
+            $mulaiStr   = $this->cuti_mulai?->toDateString() ?? $todayStr;
+            $selesaiStr = $this->cuti_selesai?->toDateString();
+
+            $existing = $this->cutis()
+                ->whereDate('mulai_tanggal', $mulaiStr)
+                ->first();
+
+            if ($existing) {
+                $existing->update([
+                    'status_ketersediaan' => $ketersediaan,
+                    'selesai_tanggal'     => $selesaiStr,
+                    'keterangan'          => $this->keterangan_cuti,
+                ]);
+            } else {
+                $this->cutis()->create([
+                    'status_ketersediaan' => $ketersediaan,
+                    'mulai_tanggal'       => $mulaiStr,
+                    'selesai_tanggal'     => $selesaiStr,
+                    'keterangan'          => $this->keterangan_cuti,
+                ]);
+            }
+        } else {
+            // Jika dikembalikan ke 'tersedia', batalkan cuti masa depan yang belum dimulai
+            // dan tutup cuti berjalan/terbuka ke kemarin agar histori cuti masa lalu tetap utuh.
+            $this->cutis()
+                ->whereDate('mulai_tanggal', '>=', $todayStr)
+                ->delete();
+
+            $this->cutis()
+                ->whereDate('mulai_tanggal', '<', $todayStr)
+                ->where(function ($q) use ($todayStr) {
+                    $q->whereNull('selesai_tanggal')
+                        ->orWhereDate('selesai_tanggal', '>=', $todayStr);
+                })
+                ->update(['selesai_tanggal' => $yesterdayStr]);
+        }
+
+        $this->unsetRelation('cutis');
+    }
+
+    public function cutis(): HasMany
+    {
+        return $this->hasMany(InstrukturCuti::class)->orderByDesc('mulai_tanggal');
     }
 
     // Mendeteksi sertifikasi yang akan habis masa berlakunya dalam 30 hari ke depan atau sudah kedaluwarsa.

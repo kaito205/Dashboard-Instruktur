@@ -110,7 +110,9 @@
             }
             const data = await res.json();
             this.items = this.items.filter((i) => i.alert_key !== item.alert_key);
-            this.totalAlerts = typeof data.total_aktif === 'number' ? data.total_aktif : this.items.length;
+            this.totalAlerts = typeof data.total_peringatan === 'number'
+                ? data.total_peringatan
+                : (typeof data.total_aktif === 'number' ? data.total_aktif : this.items.length);
             this.signature = this.buildSignature(this.totalAlerts, this.items);
             this.markSeen();
             this.syncPageCounts(item.alert_key);
@@ -140,7 +142,9 @@
             }
             const data = await res.json();
             this.items = [];
-            this.totalAlerts = typeof data.total_aktif === 'number' ? data.total_aktif : 0;
+            this.totalAlerts = typeof data.total_peringatan === 'number'
+                ? data.total_peringatan
+                : (typeof data.total_aktif === 'number' ? data.total_aktif : 0);
             this.signature = this.buildSignature(this.totalAlerts, this.items);
             this.markSeen();
             this.syncPageCounts(null);

@@ -75,26 +75,40 @@ class Evaluasi extends Model
         return round(($avgSkala5 / 5.0) * 100.0, 2);
     }
 
-    public function getRataRataSkala5Attribute(): ?float
+    public function getSkorIndikatorAttribute(): array
     {
         $jawaban = $this->jawaban;
-        if (!is_array($jawaban)) {
-            return null;
+        if (! is_array($jawaban)) {
+            return [];
         }
 
-        $skorMap = $jawaban['skor_indikator'] ?? $jawaban;
-        $nums = [];
+        $skorMap = is_array($jawaban['skor_indikator'] ?? null)
+            ? $jawaban['skor_indikator']
+            : $jawaban;
+
+        $out = [];
         foreach (['indikator_1', 'indikator_2', 'indikator_3', 'indikator_4', 'indikator_5'] as $key) {
             if (isset($skorMap[$key]) && is_numeric($skorMap[$key])) {
-                $nums[] = (float) $skorMap[$key];
+                $out[$key] = round((float) $skorMap[$key], 2);
             }
         }
 
-        if (count($nums) === 0) {
-            return null;
+        return $out;
+    }
+
+    public function getRataRataSkala5Attribute(): ?float
+    {
+        $skorMap = $this->skor_indikator;
+        if ($skorMap !== []) {
+            return round(array_sum($skorMap) / count($skorMap), 2);
         }
 
-        return round(array_sum($nums) / count($nums), 2);
+        $jawaban = $this->jawaban;
+        if (is_array($jawaban) && isset($jawaban['rata_rata_skala_5']) && is_numeric($jawaban['rata_rata_skala_5'])) {
+            return round((float) $jawaban['rata_rata_skala_5'], 2);
+        }
+
+        return null;
     }
 
     public function getKomentarPesertaAttribute(): ?string

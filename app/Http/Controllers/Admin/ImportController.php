@@ -7,6 +7,7 @@ use App\Models\Absensi;
 use App\Models\Evaluasi;
 use App\Models\ImportHistory;
 use App\Models\Instruktur;
+use App\Models\Jadwal;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -140,18 +141,20 @@ class ImportController extends Controller
             $validationResult = $this->validateAndDetectDuplicates($jenis, $headers, $dataRows, $isDate1904);
             $preview          = array_slice($validationResult['rows'], 0, 50);
             $summary          = $validationResult['summary'];
+            $previewToken     = bin2hex(random_bytes(12));
 
             $this->storePreviewPayload((int) auth()->id(), [
-                'jenis'        => $jenis,
-                'headers'      => $headers,
-                'rows'         => $dataRows,
-                'is_date_1904' => $isDate1904,
-                'filename'     => $file->getClientOriginalName(),
-                'created_at'   => now()->timestamp,
-            ]);
+                'preview_token' => $previewToken,
+                'jenis'         => $jenis,
+                'headers'       => $headers,
+                'rows'          => $dataRows,
+                'is_date_1904'  => $isDate1904,
+                'filename'      => $file->getClientOriginalName(),
+                'created_at'    => now()->timestamp,
+            ], $previewToken);
 
-            return view($this->viewPrefix . '.preview', compact('preview', 'headers', 'jenis', 'summary'));
-        } catch (\Exception $e) {
+            return view($this->viewPrefix . '.preview', compact('preview', 'headers', 'jenis', 'summary', 'previewToken'));
+        } catch (\Throwable $e) {
             return back()->with('error', 'Gagal membaca berkas: ' . $e->getMessage());
         }
     }
@@ -160,21 +163,33 @@ class ImportController extends Controller
     {
         $this->authorizeManageImport();
 
-        $userId = (int) auth()->id();
-        $data   = $this->loadPreviewPayload($userId);
+        $userId       = (int) auth()->id();
+        $previewToken = $this->sanitizePreviewToken($request->input('preview_token'));
+        $data         = $this->loadPreviewPayload($userId, $previewToken);
 
-        if (!$data) {
+        if (! $data) {
             return redirect()->route($this->routePrefix . '.index')
                 ->with('error', 'Sesi pratinjau sudah berakhir. Silakan unggah ulang berkas.');
         }
 
-        $berhasil   = 0;
-        $gagal      = 0;
-        $errors     = [];
-        $batchId    = 'import_' . now()->format('YmdHis');
-        $isDate1904 = (bool) ($data['is_date_1904'] ?? false);
+        $berhasil        = 0;
+        $gagal           = 0;
+        $errors          = [];
+        $batchId         = 'import_' . now()->format('YmdHis') . '_' . substr(bin2hex(random_bytes(3)), 0, 6);
+        $isDate1904      = (bool) ($data['is_date_1904'] ?? false);
+        $seenBatchHashes = [];
+        $seenAbsensiRows = [];
 
-        DB::transaction(function () use ($data, $batchId, $isDate1904, &$berhasil, &$gagal, &$errors) {
+        DB::transaction(function () use (
+            $data,
+            $batchId,
+            $isDate1904,
+            &$berhasil,
+            &$gagal,
+            &$errors,
+            &$seenBatchHashes,
+            &$seenAbsensiRows
+        ) {
             $headers = $data['headers'];
             $rows    = $data['rows'];
             $jenis   = $data['jenis'];
@@ -185,13 +200,23 @@ class ImportController extends Controller
                 $mapped = array_combine($headers, $padded);
 
                 try {
-                    if ($jenis === 'absensi') {
-                        $this->prosesAbsensi($mapped, $isDate1904);
-                    } else {
-                        $this->prosesEvaluasi($mapped, $batchId, $isDate1904);
-                    }
+                    DB::transaction(function () use (
+                        $jenis,
+                        $mapped,
+                        $batchId,
+                        $isDate1904,
+                        $nomor,
+                        &$seenBatchHashes,
+                        &$seenAbsensiRows
+                    ) {
+                        if ($jenis === 'absensi') {
+                            $this->prosesAbsensi($mapped, $batchId, $isDate1904, $seenAbsensiRows, $nomor);
+                        } else {
+                            $this->prosesEvaluasi($mapped, $batchId, $isDate1904, $seenBatchHashes, $nomor);
+                        }
+                    });
                     $berhasil++;
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
                     $gagal++;
                     $errors[] = "Baris {$nomor}: " . $e->getMessage();
                 }
@@ -211,7 +236,7 @@ class ImportController extends Controller
             'status'         => $status,
         ]);
 
-        $this->deletePreviewPayload($userId);
+        $this->deletePreviewPayload($userId, $previewToken ?: ($data['preview_token'] ?? null));
 
         $message = "Import selesai. Berhasil: {$berhasil} baris, Gagal/Dilewati: {$gagal} baris.";
         return redirect()->route($this->routePrefix . '.index')
@@ -219,15 +244,26 @@ class ImportController extends Controller
             ->with('import_errors', $errors);
     }
 
-    private function previewFilePath(int $userId): string
+    private function sanitizePreviewToken(mixed $raw): ?string
     {
+        $val = trim((string) ($raw ?? ''));
+
+        return preg_match('/^[a-f0-9]{16,64}$/i', $val) ? strtolower($val) : null;
+    }
+
+    private function previewFilePath(int $userId, ?string $token = null): string
+    {
+        if ($token !== null && $token !== '') {
+            return self::PREVIEW_STORAGE_DIR . '/preview_user_' . $userId . '_' . $token . '.json';
+        }
+
         return self::PREVIEW_STORAGE_DIR . '/preview_user_' . $userId . '.json';
     }
 
     private function cleanupExpiredPreviews(): void
     {
         $disk = Storage::disk('local');
-        if (!$disk->exists(self::PREVIEW_STORAGE_DIR)) {
+        if (! $disk->exists(self::PREVIEW_STORAGE_DIR)) {
             return;
         }
 
@@ -243,31 +279,44 @@ class ImportController extends Controller
         }
     }
 
-    private function storePreviewPayload(int $userId, array $payload): void
+    private function storePreviewPayload(int $userId, array $payload, ?string $token = null): void
     {
         $this->cleanupExpiredPreviews();
 
-        $path = $this->previewFilePath($userId);
-        Storage::disk('local')->put(
-            $path,
-            json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
-        );
+        $encoded = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $disk    = Storage::disk('local');
+        $disk->put($this->previewFilePath($userId), $encoded);
+        if ($token !== null && $token !== '') {
+            $disk->put($this->previewFilePath($userId, $token), $encoded);
+        }
         session()->forget('import_preview_' . $userId);
     }
 
-    private function loadPreviewPayload(int $userId): ?array
+    private function loadPreviewPayload(int $userId, ?string $token = null): ?array
     {
         $this->cleanupExpiredPreviews();
 
-        $disk = Storage::disk('local');
-        $path = $this->previewFilePath($userId);
+        $disk  = Storage::disk('local');
+        $paths = [];
+        if ($token !== null && $token !== '') {
+            $paths[] = $this->previewFilePath($userId, $token);
+        }
+        $paths[] = $this->previewFilePath($userId);
 
-        if ($disk->exists($path)) {
-            $raw = $disk->get($path);
-            if (is_string($raw) && $raw !== '') {
-                $decoded = json_decode($raw, true);
-                if (is_array($decoded) && isset($decoded['jenis'], $decoded['headers'], $decoded['rows'])) {
-                    return $decoded;
+        foreach ($paths as $path) {
+            if ($disk->exists($path)) {
+                $raw = $disk->get($path);
+                if (is_string($raw) && $raw !== '') {
+                    $decoded = json_decode($raw, true);
+                    if (is_array($decoded) && isset($decoded['jenis'], $decoded['headers'], $decoded['rows'])) {
+                        if ($token !== null && $token !== '' && $path === $this->previewFilePath($userId)) {
+                            if (($decoded['preview_token'] ?? null) !== $token) {
+                                continue;
+                            }
+                        }
+
+                        return $decoded;
+                    }
                 }
             }
         }
@@ -276,13 +325,37 @@ class ImportController extends Controller
         return is_array($legacySession) ? $legacySession : null;
     }
 
-    private function deletePreviewPayload(int $userId): void
+    private function deletePreviewPayload(int $userId, ?string $token = null): void
     {
-        $disk = Storage::disk('local');
-        $path = $this->previewFilePath($userId);
-        if ($disk->exists($path)) {
-            $disk->delete($path);
+        $disk        = Storage::disk('local');
+        $defaultPath = $this->previewFilePath($userId);
+
+        if ($token !== null && $token !== '') {
+            $tokenPath = $this->previewFilePath($userId, $token);
+            if ($disk->exists($tokenPath)) {
+                $disk->delete($tokenPath);
+            }
+            if ($disk->exists($defaultPath)) {
+                $raw     = $disk->get($defaultPath);
+                $decoded = is_string($raw) ? json_decode($raw, true) : null;
+                if (! is_array($decoded) || ($decoded['preview_token'] ?? null) === $token) {
+                    $disk->delete($defaultPath);
+                }
+            }
+        } else {
+            if ($disk->exists($defaultPath)) {
+                $raw     = $disk->get($defaultPath);
+                $decoded = is_string($raw) ? json_decode($raw, true) : null;
+                if (is_array($decoded) && ! empty($decoded['preview_token'])) {
+                    $tokenPath = $this->previewFilePath($userId, (string) $decoded['preview_token']);
+                    if ($disk->exists($tokenPath)) {
+                        $disk->delete($tokenPath);
+                    }
+                }
+                $disk->delete($defaultPath);
+            }
         }
+
         session()->forget('import_preview_' . $userId);
     }
 
@@ -405,36 +478,54 @@ class ImportController extends Controller
                         $rowStatus  = 'invalid';
                         $rowMessage = 'Kolom status kehadiran kosong.';
                     } else {
-                        $parsedCheckin  = !empty($mapped['jam_checkin']) && trim((string) $mapped['jam_checkin']) !== '-'
-                            ? $this->parseTime((string) $mapped['jam_checkin'])
-                            : null;
-                        $parsedCheckout = !empty($mapped['jam_checkout']) && trim((string) $mapped['jam_checkout']) !== '-'
-                            ? $this->parseTime((string) $mapped['jam_checkout'])
-                            : null;
-                        $normStatus = $this->normalizeStatusAbsensi((string) $mapped['status']);
-
-                        if (
-                            in_array($normStatus, ['hadir', 'terlambat'], true)
-                            && $parsedCheckin !== null
-                            && $parsedCheckout !== null
-                            && substr($parsedCheckout, 0, 5) < substr($parsedCheckin, 0, 5)
-                        ) {
+                        $rawStatusVal = trim((string) ($mapped['status'] ?? ''));
+                        if (! $this->isValidStatusAbsensi($rawStatusVal)) {
                             $rowStatus  = 'invalid';
-                            $rowMessage = "Jam check-out ({$parsedCheckout}) tidak boleh lebih awal dari jam check-in ({$parsedCheckin}).";
+                            $rowMessage = "Status kehadiran tidak dikenali: '{$rawStatusVal}'. Gunakan hadir, terlambat, izin, atau tidak_hadir.";
                         } else {
-                            $uniqueKey = $instruktur->id . '|' . $tanggal;
-                            $existsDb  = Absensi::where('instruktur_id', $instruktur->id)
-                                ->whereDate('tanggal', $tanggal)
-                                ->exists();
+                            $parsedCheckin  = ! empty($mapped['jam_checkin']) && trim((string) $mapped['jam_checkin']) !== '-'
+                                ? $this->parseTime((string) $mapped['jam_checkin'])
+                                : null;
+                            $parsedCheckout = ! empty($mapped['jam_checkout']) && trim((string) $mapped['jam_checkout']) !== '-'
+                                ? $this->parseTime((string) $mapped['jam_checkout'])
+                                : null;
+                            $normStatus = $this->normalizeStatusAbsensi($rawStatusVal);
+                            if (in_array($normStatus, ['izin', 'tidak_hadir'], true)) {
+                                $parsedCheckin  = null;
+                                $parsedCheckout = null;
+                            }
 
-                            if ($existsDb) {
-                                $rowStatus  = 'duplikat';
-                                $rowMessage = "Duplikat di database: Absensi {$instruktur->nama_lengkap} tanggal {$tanggal} sudah tercatat.";
-                            } elseif (isset($seenKeys[$uniqueKey])) {
-                                $rowStatus  = 'duplikat';
-                                $rowMessage = "Duplikat di dalam berkas (sama dengan baris {$seenKeys[$uniqueKey]}).";
+                            if (
+                                in_array($normStatus, ['hadir', 'terlambat'], true)
+                                && $parsedCheckin !== null
+                                && $parsedCheckout !== null
+                                && substr($parsedCheckout, 0, 5) < substr($parsedCheckin, 0, 5)
+                            ) {
+                                $rowStatus  = 'invalid';
+                                $rowMessage = "Jam check-out ({$parsedCheckout}) tidak boleh lebih awal dari jam check-in ({$parsedCheckin}).";
                             } else {
-                                $seenKeys[$uniqueKey] = $nomor;
+                                $matchedJadwal = $this->resolveMatchingJadwalForImport($instruktur->id, $tanggal, $parsedCheckin, $mapped);
+                                $candidate     = [
+                                    'instruktur_id' => $instruktur->id,
+                                    'tanggal'       => $tanggal,
+                                    'jadwal_id'     => $matchedJadwal?->id,
+                                    'jam_checkin'   => $parsedCheckin ? substr($parsedCheckin, 0, 5) : null,
+                                    'jam_checkout'  => $parsedCheckout ? substr($parsedCheckout, 0, 5) : null,
+                                    'status'        => $normStatus,
+                                ];
+
+                                $dbDuplicate   = $this->hasConflictingAbsensiInDb($candidate);
+                                $fileDuplicate = $this->findConflictingAbsensiInSeen($seenKeys, $candidate);
+
+                                if ($dbDuplicate) {
+                                    $rowStatus  = 'duplikat';
+                                    $rowMessage = "Duplikat di database: Absensi {$instruktur->nama_lengkap} tanggal {$tanggal} pada sesi tersebut sudah tercatat.";
+                                } elseif ($fileDuplicate !== null) {
+                                    $rowStatus  = 'duplikat';
+                                    $rowMessage = "Duplikat di dalam berkas (sama dengan baris {$fileDuplicate}).";
+                                } else {
+                                    $seenKeys[] = $candidate + ['nomor' => $nomor];
+                                }
                             }
                         }
                     }
@@ -483,18 +574,20 @@ class ImportController extends Controller
                     $rowStatus  = 'invalid';
                     $rowMessage = "Nilai evaluasi harus berada di rentang 0-100 (atau 1-5), ditemukan: '{$nilaiRaw}'.";
                 } else {
-                    $evalCalc  = $this->extractAndNormalizeEvaluasiScores($normalizedMapped);
-                    $hashKey   = $instruktur->id . '|' . md5(json_encode($normalizedMapped));
-                    $existsDb  = $this->checkDuplicateEvaluasiInDb($instruktur->id, $normalizedMapped, $evalCalc['total_nilai']);
+                    $evalCalc     = $this->extractAndNormalizeEvaluasiScores($normalizedMapped);
+                    $intraFileKey = $this->buildEvaluasiIntraFileHash($instruktur->id, $normalizedMapped);
+                    $existsDb     = $this->checkDuplicateEvaluasiInDb($instruktur->id, $normalizedMapped, $evalCalc);
 
                     if ($existsDb) {
                         $rowStatus  = 'duplikat';
                         $rowMessage = "Duplikat di database: Evaluasi untuk {$instruktur->nama_lengkap} dari pengisi ini sudah tercatat.";
-                    } elseif (isset($seenKeys[$hashKey])) {
+                    } elseif ($intraFileKey !== null && isset($seenKeys[$intraFileKey])) {
                         $rowStatus  = 'duplikat';
-                        $rowMessage = "Baris evaluasi identik dengan baris {$seenKeys[$hashKey]} di berkas ini.";
+                        $rowMessage = "Baris evaluasi identik dengan baris {$seenKeys[$intraFileKey]} di berkas ini.";
                     } else {
-                        $seenKeys[$hashKey] = $nomor;
+                        if ($intraFileKey !== null) {
+                            $seenKeys[$intraFileKey] = $nomor;
+                        }
                     }
                 }
             }
@@ -523,9 +616,9 @@ class ImportController extends Controller
 
     private function resolveInstruktur(array $row): ?Instruktur
     {
-        if (!empty($row['kode_instruktur'])) {
-            $kode = trim((string) $row['kode_instruktur']);
-            $inst = Instruktur::where('kode_instruktur', $kode)->first();
+        if (! empty($row['kode_instruktur'])) {
+            $kode = strtoupper(trim((string) $row['kode_instruktur']));
+            $inst = Instruktur::whereRaw('UPPER(kode_instruktur) = ?', [$kode])->first();
             if ($inst) {
                 return $inst;
             }
@@ -536,8 +629,29 @@ class ImportController extends Controller
             return null;
         }
 
-        return Instruktur::where('nama_lengkap', $nama)->first()
-            ?? Instruktur::where('nama_lengkap', 'like', '%' . $nama . '%')->first();
+        $exact = Instruktur::whereRaw('LOWER(nama_lengkap) = ?', [mb_strtolower($nama)])->first();
+        if ($exact) {
+            return $exact;
+        }
+
+        // Pencocokan nama tanpa gelar di belakang koma (mis. "Sandi Yana" -> "Sandi Yana, S.Kom") hanya jika unik.
+        $namaTanpaGelar = mb_strtolower(trim(explode(',', $nama)[0]));
+        if (mb_strlen($namaTanpaGelar) >= 3) {
+            $candidates = Instruktur::query()
+                ->get(['id', 'nama_lengkap', 'kode_instruktur'])
+                ->filter(function (Instruktur $ins) use ($namaTanpaGelar): bool {
+                    $baseDb = mb_strtolower(trim(explode(',', (string) $ins->nama_lengkap)[0]));
+
+                    return $baseDb === $namaTanpaGelar;
+                })
+                ->values();
+
+            if ($candidates->count() === 1) {
+                return Instruktur::find($candidates->first()->id);
+            }
+        }
+
+        return null;
     }
 
     private function parseFile($file): array
@@ -571,12 +685,18 @@ class ImportController extends Controller
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($realPath);
             $sheet       = $spreadsheet->getActiveSheet();
             $rows        = [];
+            $hasDateUtil = class_exists('\PhpOffice\PhpSpreadsheet\Shared\Date');
             foreach ($sheet->getRowIterator() as $row) {
                 $cells        = [];
                 $cellIterator = $row->getCellIterator();
                 $cellIterator->setIterateOnlyExistingCells(false);
                 foreach ($cellIterator as $cell) {
-                    $cells[] = $cell->getFormattedValue();
+                    $rawVal = $cell->getValue();
+                    if ($hasDateUtil && is_numeric($rawVal) && \PhpOffice\PhpSpreadsheet\Shared\Date::isDateTime($cell)) {
+                        $cells[] = (string) $rawVal;
+                    } else {
+                        $cells[] = $cell->getFormattedValue();
+                    }
                 }
                 $rows[] = $cells;
             }
@@ -722,16 +842,21 @@ class ImportController extends Controller
         return max(0, $index - 1);
     }
 
-    private function prosesAbsensi(array $row, bool $isDate1904 = false): void
-    {
+    private function prosesAbsensi(
+        array $row,
+        string $batchId,
+        bool $isDate1904 = false,
+        array &$seenAbsensiRows = [],
+        int $nomor = 0
+    ): void {
         $instruktur = $this->resolveInstruktur($row);
-        if (!$instruktur) {
+        if (! $instruktur) {
             $ident = $row['nama_instruktur'] ?? $row['kode_instruktur'] ?? '';
             throw new \Exception("Instruktur '{$ident}' tidak ditemukan.");
         }
 
         $tanggal = $this->parseDate((string) ($row['tanggal'] ?? ''), $isDate1904);
-        if (!$tanggal) {
+        if (! $tanggal) {
             throw new \Exception("Format tanggal tidak valid: '" . ($row['tanggal'] ?? '') . "'.");
         }
 
@@ -741,11 +866,15 @@ class ImportController extends Controller
             ? $this->parseOptionalTime($row['jam_mulai_jadwal'], 'jam mulai jadwal')
             : null;
 
-        if (trim((string) ($row['status'] ?? '')) === '') {
+        $rawStatus = trim((string) ($row['status'] ?? ''));
+        if ($rawStatus === '') {
             throw new \Exception('Kolom status kehadiran wajib diisi.');
         }
+        if (! $this->isValidStatusAbsensi($rawStatus)) {
+            throw new \Exception("Status kehadiran tidak dikenali: '{$rawStatus}'.");
+        }
 
-        $status = $this->normalizeStatusAbsensi((string) $row['status']);
+        $status = $this->normalizeStatusAbsensi($rawStatus);
 
         if (in_array($status, ['izin', 'tidak_hadir'], true)) {
             $jamCheckin  = null;
@@ -758,39 +887,64 @@ class ImportController extends Controller
             throw new \Exception("Jam check-out ({$jamCheckout}) tidak boleh lebih awal dari jam check-in ({$jamCheckin}).");
         }
 
-        $existing = Absensi::where('instruktur_id', $instruktur->id)
-            ->whereDate('tanggal', $tanggal)
-            ->first();
+        $matchedJadwal = $this->resolveMatchingJadwalForImport($instruktur->id, $tanggal, $jamCheckin, $row);
+        if ($jamMulai === null && $matchedJadwal?->jam_mulai) {
+            $jamMulai = substr((string) $matchedJadwal->jam_mulai, 0, 5);
+        }
 
-        if ($existing) {
+        $candidate = [
+            'instruktur_id' => $instruktur->id,
+            'tanggal'       => $tanggal,
+            'jadwal_id'     => $matchedJadwal?->id,
+            'jam_checkin'   => $jamCheckin ? substr($jamCheckin, 0, 5) : null,
+            'jam_checkout'  => $jamCheckout ? substr($jamCheckout, 0, 5) : null,
+            'status'        => $status,
+        ];
+
+        $fileDup = $this->findConflictingAbsensiInSeen($seenAbsensiRows, $candidate);
+        if ($fileDup !== null) {
+            throw new \Exception("Duplikat di dalam berkas (sama dengan baris {$fileDup}).");
+        }
+
+        if ($this->hasConflictingAbsensiInDb($candidate, $batchId)) {
             throw new \Exception("Duplikat: Absensi {$instruktur->nama_lengkap} pada {$tanggal} sudah ada.");
         }
 
+        $seenAbsensiRows[] = $candidate + ['nomor' => $nomor];
+
         $payload = [
             'instruktur_id' => $instruktur->id,
+            'jadwal_id'     => $matchedJadwal?->id,
             'tanggal'       => $tanggal,
             'jam_checkin'   => $jamCheckin,
             'jam_checkout'  => $jamCheckout,
             'status'        => $status,
             'sumber'        => 'import',
-            'keterangan'    => !empty($row['keterangan']) ? trim((string) $row['keterangan']) : null,
+            'batch_import'  => $batchId,
+            'keterangan'    => ! empty($row['keterangan']) ? trim((string) $row['keterangan']) : null,
         ];
 
         if ($jamMulai !== null) {
             $payload['jam_mulai_jadwal'] = $jamMulai;
 
             if ($jamCheckin !== null && in_array($status, ['hadir', 'terlambat'], true)) {
-                $payload['menit_terlambat'] = Absensi::hitungKeterlambatan($jamMulai, $jamCheckin)['menit_terlambat'];
+                $kalkulasi                  = Absensi::hitungKeterlambatan($jamMulai, $jamCheckin);
+                $payload['menit_terlambat'] = $kalkulasi['menit_terlambat'];
             }
         }
 
         Absensi::create($payload);
     }
 
-    private function prosesEvaluasi(array $row, string $batchId, bool $isDate1904 = false): void
-    {
+    private function prosesEvaluasi(
+        array $row,
+        string $batchId,
+        bool $isDate1904 = false,
+        array &$seenBatchHashes = [],
+        int $nomor = 0
+    ): void {
         $instruktur = $this->resolveInstruktur($row);
-        if (!$instruktur) {
+        if (! $instruktur) {
             $ident = $row['nama_instruktur'] ?? $row['kode_instruktur'] ?? '';
             throw new \Exception("Instruktur '{$ident}' tidak ditemukan.");
         }
@@ -799,7 +953,7 @@ class ImportController extends Controller
         if (isset($row['tanggal']) && trim((string) $row['tanggal']) !== '' && trim((string) $row['tanggal']) !== '-') {
             $rawTanggal    = trim((string) $row['tanggal']);
             $parsedTanggal = $this->parseDate($rawTanggal, $isDate1904);
-            if (!$parsedTanggal) {
+            if (! $parsedTanggal) {
                 throw new \Exception("Format tanggal evaluasi tidak valid: '{$rawTanggal}'.");
             }
             $row['tanggal'] = $parsedTanggal;
@@ -809,7 +963,7 @@ class ImportController extends Controller
         if (isset($row['timestamp']) && trim((string) $row['timestamp']) !== '' && trim((string) $row['timestamp']) !== '-') {
             $rawTs    = trim((string) $row['timestamp']);
             $parsedTs = $this->parseDateTime($rawTs, $isDate1904);
-            if (!$parsedTs) {
+            if (! $parsedTs) {
                 throw new \Exception("Format timestamp evaluasi tidak valid: '{$rawTs}'.");
             }
             $formattedTs = ($parsedTs->format('H:i:s') === '00:00:00' && preg_match('/^\d+$/', $rawTs))
@@ -820,7 +974,7 @@ class ImportController extends Controller
         }
 
         if (isset($row['nilai']) && trim((string) $row['nilai']) !== '') {
-            if (!is_numeric($row['nilai'])) {
+            if (! is_numeric($row['nilai'])) {
                 throw new \Exception("Nilai evaluasi tidak valid: '{$row['nilai']}'.");
             }
             $numVal = (float) $row['nilai'];
@@ -829,12 +983,21 @@ class ImportController extends Controller
             }
         }
 
-        $evalCalc = $this->extractAndNormalizeEvaluasiScores($row);
-        $nilai    = $evalCalc['total_nilai'];
+        $evalCalc     = $this->extractAndNormalizeEvaluasiScores($row);
+        $nilai        = $evalCalc['total_nilai'];
+        $intraFileKey = $this->buildEvaluasiIntraFileHash($instruktur->id, $row);
 
-        if ($this->checkDuplicateEvaluasiInDb($instruktur->id, $row, $nilai)) {
-            $pengisiLabel = !empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : 'Anonim';
+        if ($intraFileKey !== null && isset($seenBatchHashes[$intraFileKey])) {
+            throw new \Exception("Baris evaluasi identik dengan baris {$seenBatchHashes[$intraFileKey]} di berkas ini.");
+        }
+
+        if ($this->checkDuplicateEvaluasiInDb($instruktur->id, $row, $evalCalc, $batchId)) {
+            $pengisiLabel = ! empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : 'Anonim';
             throw new \Exception("Duplikat: Evaluasi untuk {$instruktur->nama_lengkap} dari '{$pengisiLabel}' sudah ada di database.");
+        }
+
+        if ($intraFileKey !== null) {
+            $seenBatchHashes[$intraFileKey] = $nomor;
         }
 
         $komentar = null;
@@ -912,12 +1075,23 @@ class ImportController extends Controller
 
         $otherNumeric = [];
         $ignoredCols  = [
+            'no', 'nomor', 'no_urut', 'urut', 'id', 'row_id', 'id_baris',
+            'sesi', 'pertemuan', 'pertemuan_ke', 'sesi_ke',
             'nama_instruktur', 'kode_instruktur', 'nama_pengisi', 'tanggal',
             'timestamp', 'jam', 'waktu', 'nilai', 'komentar', 'catatan_peserta',
-            'saran', 'catatan', 'materi', 'materi_evaluasi', 'kode', 'kode_kelas',
+            'saran', 'catatan', 'materi', 'materi_evaluasi', 'topik', 'kode', 'kode_kelas',
+            'kelas', 'nama_kelas', 'program', 'program_pelatihan',
+            'email', 'alamat_email', 'email_address',
+            'nim', 'nik', 'nis', 'nisn',
+            'telepon', 'no_telepon', 'no_hp', 'hp', 'whatsapp', 'wa',
+            'usia', 'umur', 'semester', 'angkatan', 'gelombang', 'batch', 'tahun', 'bulan',
         ];
         foreach ($row as $k => $v) {
-            if (!in_array($k, $ignoredCols, true) && is_numeric($v)) {
+            $kNorm = strtolower(trim((string) $k));
+            if (in_array($kNorm, $ignoredCols, true) || preg_match('/^(no|nomor|id)(_[a-z0-9]+)?$/', $kNorm)) {
+                continue;
+            }
+            if (is_numeric($v)) {
                 $f = (float) $v;
                 if ($f >= 0 && $f <= 100) {
                     $otherNumeric[] = $f;
@@ -987,23 +1161,77 @@ class ImportController extends Controller
         ];
     }
 
-    private function checkDuplicateEvaluasiInDb(int $instrukturId, array $row, ?float $totalNilai100): bool
+    private function buildEvaluasiIntraFileHash(int $instrukturId, array $row): ?string
     {
-        $namaPengisi = !empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : null;
-        $komentar    = null;
+        $namaPengisi = trim((string) ($row['nama_pengisi'] ?? ''));
+        $isAnonim    = $namaPengisi === '' || mb_strtolower($namaPengisi) === 'anonim';
+        $hasTs       = ! empty($row['timestamp']) && trim((string) $row['timestamp']) !== '-';
+
+        $komentar = '';
         foreach (['komentar', 'catatan_peserta', 'saran', 'catatan'] as $komKey) {
-            if (!empty($row[$komKey]) && trim((string) $row[$komKey]) !== '') {
+            if (! empty($row[$komKey]) && trim((string) $row[$komKey]) !== '') {
                 $komentar = trim((string) $row[$komKey]);
                 break;
             }
         }
 
-        $query = Evaluasi::where('instruktur_id', $instrukturId);
+        // Responden anonim tanpa timestamp dan tanpa komentar unik boleh memiliki nilai identik dalam satu berkas survei.
+        if ($isAnonim && ! $hasTs && $komentar === '') {
+            return null;
+        }
+
+        $filtered = $row;
+        unset($filtered['no'], $filtered['nomor'], $filtered['no_urut'], $filtered['urut'], $filtered['id'], $filtered['row_id']);
+
+        return $instrukturId . '|' . md5(json_encode($filtered));
+    }
+
+    private function checkDuplicateEvaluasiInDb(
+        int $instrukturId,
+        array $row,
+        array $evalCalc,
+        ?string $excludeBatchId = null
+    ): bool {
+        $totalNilai100 = $evalCalc['total_nilai'] ?? null;
+        $namaPengisi   = ! empty($row['nama_pengisi']) ? trim((string) $row['nama_pengisi']) : null;
+        if ($namaPengisi !== null && mb_strtolower($namaPengisi) === 'anonim') {
+            $namaPengisi = null;
+        }
+
+        $komentar = null;
+        foreach (['komentar', 'catatan_peserta', 'saran', 'catatan'] as $komKey) {
+            if (! empty($row[$komKey]) && trim((string) $row[$komKey]) !== '') {
+                $komentar = trim((string) $row[$komKey]);
+                break;
+            }
+        }
+
+        $materiEvaluasi = null;
+        foreach (['materi_evaluasi', 'materi', 'topik'] as $matKey) {
+            if (! empty($row[$matKey]) && trim((string) $row[$matKey]) !== '') {
+                $materiEvaluasi = trim((string) $row[$matKey]);
+                break;
+            }
+        }
+
+        $hasTimestamp = ! empty($row['timestamp']) && trim((string) $row['timestamp']) !== '-';
+        $hasTanggal   = ! empty($row['tanggal']) && trim((string) $row['tanggal']) !== '-';
+
+        // Responden anonim tanpa timestamp, tanpa tanggal, dan tanpa komentar tidak dianggap duplikat lintas responden.
+        if ($namaPengisi === null && ! $hasTimestamp && ! $hasTanggal && $komentar === null) {
+            return false;
+        }
+
+        $query = Evaluasi::where('instruktur_id', $instrukturId)
+            ->when(
+                $excludeBatchId !== null && $excludeBatchId !== '',
+                fn ($q) => $q->where(fn ($sub) => $sub->whereNull('batch_import')->orWhere('batch_import', '!=', $excludeBatchId))
+            );
 
         if ($namaPengisi !== null) {
             $query->where('nama_pengisi', $namaPengisi);
         } else {
-            $query->whereNull('nama_pengisi');
+            $query->where(fn ($q) => $q->whereNull('nama_pengisi')->orWhere('nama_pengisi', 'Anonim'));
         }
 
         if ($totalNilai100 !== null) {
@@ -1018,9 +1246,43 @@ class ImportController extends Controller
                     ->orWhere('jawaban->catatan_peserta', $komentar)
                     ->orWhere('jawaban->komentar', $komentar);
             });
+        } else {
+            $query->whereNull('komentar');
         }
 
-        return $query->exists();
+        if ($materiEvaluasi !== null) {
+            $query->where('materi_evaluasi', $materiEvaluasi);
+        }
+
+        if ($hasTimestamp) {
+            $tsVal = trim((string) $row['timestamp']);
+            if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $tsVal)) {
+                $query->where('created_at', $tsVal);
+            } else {
+                $query->whereDate('created_at', substr($tsVal, 0, 10));
+            }
+        } elseif ($hasTanggal) {
+            $query->whereDate('created_at', substr(trim((string) $row['tanggal']), 0, 10));
+        }
+
+        $candidates = $query->limit(20)->get(['id', 'jawaban']);
+        if ($candidates->isEmpty()) {
+            return false;
+        }
+
+        $targetSkor = $evalCalc['skor_indikator'] ?? [];
+        if ($targetSkor === []) {
+            return true;
+        }
+
+        foreach ($candidates as $cand) {
+            $candSkor = $cand->skor_indikator;
+            if ($candSkor === [] || $candSkor == $targetSkor) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function excelSerialToCarbon(float $serial, bool $isDate1904 = false): Carbon
@@ -1320,14 +1582,159 @@ class ImportController extends Controller
         return null;
     }
 
+    private function resolveMatchingJadwalForImport(
+        int $instrukturId,
+        string $tanggal,
+        ?string $jamCheckin,
+        array $row
+    ): ?Jadwal {
+        $candidates = Jadwal::where('instruktur_id', $instrukturId)
+            ->where('status', '!=', 'dibatalkan')
+            ->periode($tanggal, $tanggal)
+            ->get()
+            ->filter(fn (Jadwal $j): bool => $j->berlakuPadaTanggal($tanggal))
+            ->values();
+
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $kelasHint = trim((string) ($row['kode_kelas'] ?? $row['nama_kelas'] ?? $row['kelas'] ?? ''));
+        if ($kelasHint !== '') {
+            $hintLower = mb_strtolower($kelasHint);
+            $byKelas   = $candidates->filter(function (Jadwal $j) use ($hintLower): bool {
+                return mb_strtolower(trim((string) $j->kode_kelas)) === $hintLower
+                    || mb_strtolower(trim((string) $j->nama_kelas)) === $hintLower;
+            })->values();
+            if ($byKelas->isNotEmpty()) {
+                $candidates = $byKelas;
+            }
+        }
+
+        if ($candidates->count() === 1) {
+            return $candidates->first();
+        }
+
+        if ($jamCheckin !== null) {
+            $checkinHhMm = substr($jamCheckin, 0, 5);
+            $checkinMin  = ((int) substr($checkinHhMm, 0, 2)) * 60 + (int) substr($checkinHhMm, 3, 2);
+
+            $best     = null;
+            $bestDiff = PHP_INT_MAX;
+            foreach ($candidates as $j) {
+                $mulaiHhMm  = substr((string) $j->jam_mulai, 0, 5);
+                $selesaiHhMm = substr((string) $j->jam_selesai, 0, 5);
+                $mulaiMin   = ((int) substr($mulaiHhMm, 0, 2)) * 60 + (int) substr($mulaiHhMm, 3, 2);
+                $selesaiMin = ((int) substr($selesaiHhMm, 0, 2)) * 60 + (int) substr($selesaiHhMm, 3, 2);
+
+                if ($checkinMin >= ($mulaiMin - 60) && $checkinMin <= $selesaiMin) {
+                    $diff = abs($checkinMin - $mulaiMin);
+                    if ($diff < $bestDiff) {
+                        $bestDiff = $diff;
+                        $best     = $j;
+                    }
+                }
+            }
+
+            if ($best !== null) {
+                return $best;
+            }
+        }
+
+        return null;
+    }
+
+    private function absensiSlotsConflict(array $a, array $b): bool
+    {
+        if ((int) ($a['instruktur_id'] ?? 0) !== (int) ($b['instruktur_id'] ?? 0)) {
+            return false;
+        }
+        if (($a['tanggal'] ?? '') !== ($b['tanggal'] ?? '')) {
+            return false;
+        }
+
+        $jadwalA = $a['jadwal_id'] ?? null;
+        $jadwalB = $b['jadwal_id'] ?? null;
+        if ($jadwalA !== null && $jadwalB !== null) {
+            return (int) $jadwalA === (int) $jadwalB;
+        }
+
+        $inA  = $a['jam_checkin'] ?? null;
+        $outA = $a['jam_checkout'] ?? null;
+        $inB  = $b['jam_checkin'] ?? null;
+        $outB = $b['jam_checkout'] ?? null;
+
+        if ($inA !== null && $outA !== null && $inB !== null && $outB !== null) {
+            $sA = substr((string) $inA, 0, 5);
+            $eA = substr((string) $outA, 0, 5);
+            $sB = substr((string) $inB, 0, 5);
+            $eB = substr((string) $outB, 0, 5);
+
+            if ($eA <= $sB || $eB <= $sA) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function findConflictingAbsensiInSeen(array $seenRows, array $candidate): ?int
+    {
+        foreach ($seenRows as $seen) {
+            if ($this->absensiSlotsConflict($seen, $candidate)) {
+                return (int) ($seen['nomor'] ?? 0);
+            }
+        }
+
+        return null;
+    }
+
+    private function hasConflictingAbsensiInDb(array $candidate, ?string $excludeBatchId = null): bool
+    {
+        $existingRows = Absensi::where('instruktur_id', $candidate['instruktur_id'])
+            ->whereDate('tanggal', $candidate['tanggal'])
+            ->when(
+                $excludeBatchId !== null && $excludeBatchId !== '',
+                fn ($q) => $q->where(fn ($sub) => $sub->whereNull('batch_import')->orWhere('batch_import', '!=', $excludeBatchId))
+            )
+            ->get(['jadwal_id', 'jam_checkin', 'jam_checkout']);
+
+        foreach ($existingRows as $row) {
+            $existingSlot = [
+                'instruktur_id' => $candidate['instruktur_id'],
+                'tanggal'       => $candidate['tanggal'],
+                'jadwal_id'     => $row->jadwal_id,
+                'jam_checkin'   => $row->jam_checkin ? substr((string) $row->jam_checkin, 0, 5) : null,
+                'jam_checkout'  => $row->jam_checkout ? substr((string) $row->jam_checkout, 0, 5) : null,
+            ];
+            if ($this->absensiSlotsConflict($existingSlot, $candidate)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isValidStatusAbsensi(string $value): bool
+    {
+        $norm = strtolower(trim($value));
+
+        return in_array($norm, [
+            'hadir', 'h', 'present', 'tepat_waktu', 'tepat waktu',
+            'terlambat', 'late', 'l', 'telat',
+            'izin', 'i', 'permit', 'sakit', 's',
+            'tidak_hadir', 'tidak hadir', 'alpa', 'alpha', 'a', 'absen', 'tk', 'mangkir',
+        ], true);
+    }
+
     private function normalizeStatusAbsensi(string $value): string
     {
         $value = strtolower(trim($value));
         return match (true) {
-            in_array($value, ['hadir', 'h', 'present', 'tepat_waktu'], true) => 'hadir',
-            in_array($value, ['terlambat', 'late', 'l', 'telat'], true)      => 'terlambat',
-            in_array($value, ['izin', 'i', 'permit', 'sakit', 's'], true)    => 'izin',
-            default                                                          => 'tidak_hadir',
+            in_array($value, ['hadir', 'h', 'present', 'tepat_waktu', 'tepat waktu'], true) => 'hadir',
+            in_array($value, ['terlambat', 'late', 'l', 'telat'], true)                     => 'terlambat',
+            in_array($value, ['izin', 'i', 'permit', 'sakit', 's'], true)                   => 'izin',
+            default                                                                         => 'tidak_hadir',
         };
     }
 }

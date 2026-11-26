@@ -568,7 +568,7 @@
                             </td>
                             <td class="px-4 py-3 text-xs">
                                 <p class="font-semibold text-gray-900 dark:text-white">{{ $akt->materi_disampaikan ?? '-' }}</p>
-                                @if($akt->tautan_materi)
+                                @if($akt->tautan_materi && preg_match('#^https?://#i', $akt->tautan_materi))
                                     <p class="mt-1">
                                         <a href="{{ $akt->tautan_materi }}" target="_blank" rel="noopener" class="font-medium text-brand-600 underline hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-brand-300">Buka Modul</a>
                                     </p>

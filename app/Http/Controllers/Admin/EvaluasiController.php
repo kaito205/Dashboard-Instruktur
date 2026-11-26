@@ -46,30 +46,50 @@ class EvaluasiController extends Controller
             ->paginate(15)
             ->withQueryString();
 
-        $instrukturs   = Instruktur::aktif()->orderBy('nama_lengkap')->get(['id', 'nama_lengkap', 'kode_instruktur']);
-        $rataRataTotal = $baseQuery->clone()->avg('total_nilai');
+        $instrukturs = Instruktur::withTrashed()
+            ->where(function ($q) use ($dari, $sampai, $instrukturId) {
+                $q->where(fn ($sub) => $sub->whereNull('deleted_at')->where('status', 'aktif'))
+                    ->orWhereHas('evaluasis', fn ($eq) => $eq->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']));
+                if ($instrukturId !== '') {
+                    $q->orWhere('id', $instrukturId);
+                }
+            })
+            ->orderBy('nama_lengkap')
+            ->get(['id', 'nama_lengkap', 'kode_instruktur']);
+        $rataRataTotal = $baseQuery->clone()->whereNotNull('total_nilai')->avg('total_nilai');
 
-        $rekapPerInstruktur = Instruktur::aktif()
+        $rekapPerInstruktur = Instruktur::withTrashed()
+            ->where(function ($q) use ($dari, $sampai, $instrukturId) {
+                $q->where(fn ($sub) => $sub->whereNull('deleted_at')->where('status', 'aktif'))
+                    ->orWhereHas('evaluasis', fn ($eq) => $eq->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']));
+                if ($instrukturId !== '') {
+                    $q->orWhere('id', $instrukturId);
+                }
+            })
             ->when($instrukturId, fn ($q) => $q->where('id', $instrukturId))
             ->with(['evaluasis' => fn ($q) => $q->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59'])])
             ->orderBy('nama_lengkap')
             ->get()
             ->map(function (Instruktur $inst) {
-                $count = $inst->evaluasis->count();
-                $avg   = $count > 0 ? round((float) $inst->evaluasis->avg('total_nilai'), 2) : null;
-                $min   = $count > 0 ? round((float) $inst->evaluasis->min('total_nilai'), 2) : null;
-                $max   = $count > 0 ? round((float) $inst->evaluasis->max('total_nilai'), 2) : null;
-                $skala5 = $count > 0
-                    ? round((float) $inst->evaluasis->map(fn ($e) => $e->rata_rata_skala5 ?? ($e->total_nilai / 20.0))->avg(), 2)
-                    : null;
+                $count  = $inst->evaluasis->count();
+                $scored = $inst->evaluasis->whereNotNull('total_nilai');
+                $avg    = $scored->isNotEmpty() ? round((float) $scored->avg('total_nilai'), 2) : null;
+                $min    = $scored->isNotEmpty() ? round((float) $scored->min('total_nilai'), 2) : null;
+                $max    = $scored->isNotEmpty() ? round((float) $scored->max('total_nilai'), 2) : null;
+
+                $skala5Values = $inst->evaluasis
+                    ->map(fn (Evaluasi $e) => $e->rata_rata_skala5 ?? ($e->total_nilai !== null ? ($e->total_nilai / 20.0) : null))
+                    ->filter(fn ($v) => $v !== null)
+                    ->values();
+                $skala5 = $skala5Values->isNotEmpty() ? round((float) $skala5Values->avg(), 2) : null;
 
                 return [
-                    'instruktur'      => $inst,
-                    'jumlah_evaluasi' => $count,
-                    'rata_rata_skala5'=> $skala5,
-                    'rata_rata'       => $avg,
-                    'nilai_terendah'  => $min,
-                    'nilai_tertinggi' => $max,
+                    'instruktur'       => $inst,
+                    'jumlah_evaluasi'  => $count,
+                    'rata_rata_skala5' => $skala5,
+                    'rata_rata'        => $avg,
+                    'nilai_terendah'   => $min,
+                    'nilai_tertinggi'  => $max,
                 ];
             });
 
@@ -152,28 +172,28 @@ class EvaluasiController extends Controller
         }
 
         $kelasRule = Schema::hasTable('kelas')
-            ? ['nullable', 'integer', 'exists:kelas,id']
+            ? ['nullable', 'integer', Rule::exists('kelas', 'id')->whereNull('deleted_at')]
             : ['nullable'];
 
         $request->validate([
             'kode'          => ['nullable', 'string', 'max:50', Rule::unique('kode_evaluasis', 'kode')],
             'kelas_id'      => $kelasRule,
             'nama_kelas'    => ['nullable', 'string', 'max:100'],
-            'instruktur_id' => ['nullable', 'exists:instrukturs,id'],
+            'instruktur_id' => ['nullable', Rule::exists('instrukturs', 'id')->whereNull('deleted_at')],
             'keterangan'    => ['nullable', 'string', 'max:255'],
             'max_pengisian' => ['nullable', 'integer', 'min:1'],
-            'expired_at'    => ['nullable', 'date', 'after:now'],
+            'expired_at'    => ['nullable', 'date', 'after_or_equal:today'],
         ], [
-            'kode.unique'           => 'Kode evaluasi tersebut sudah terdaftar.',
-            'kode.max'              => 'Kode evaluasi maksimal 50 karakter.',
-            'kelas_id.exists'       => 'Master data kelas yang dipilih tidak ditemukan.',
-            'instruktur_id.exists'  => 'Instruktur tidak ditemukan.',
-            'max_pengisian.integer' => 'Maksimal pengisian harus berupa angka.',
-            'max_pengisian.min'     => 'Maksimal pengisian minimal 1.',
-            'expired_at.after'      => 'Tanggal kedaluwarsa harus di masa mendatang.',
+            'kode.unique'               => 'Kode evaluasi tersebut sudah terdaftar.',
+            'kode.max'                  => 'Kode evaluasi maksimal 50 karakter.',
+            'kelas_id.exists'           => 'Master data kelas yang dipilih tidak ditemukan atau telah diarsipkan.',
+            'instruktur_id.exists'      => 'Instruktur tidak ditemukan atau telah diarsipkan.',
+            'max_pengisian.integer'     => 'Maksimal pengisian harus berupa angka.',
+            'max_pengisian.min'         => 'Maksimal pengisian minimal 1.',
+            'expired_at.after_or_equal' => 'Tanggal kedaluwarsa harus hari ini atau di masa mendatang.',
         ]);
 
-        if (!$customKode && !$request->filled('nama_kelas') && !$request->filled('instruktur_id') && !$request->filled('kelas_id')) {
+        if (! $customKode && ! $request->filled('nama_kelas') && ! $request->filled('instruktur_id') && ! $request->filled('kelas_id')) {
             return back()
                 ->withInput()
                 ->withErrors(['kode' => 'Pilih Master Data Kelas, isi Kode / Nama Kelas, atau pilih Instruktur untuk membuat kode evaluasi.']);
@@ -187,7 +207,7 @@ class EvaluasiController extends Controller
         if ($customKode) {
             $finalKode = $customKode;
         } elseif ($selectedKelas) {
-            $finalKode = ! KodeEvaluasi::where('kode', $selectedKelas->kode_kelas)->exists()
+            $finalKode = strlen($selectedKelas->kode_kelas) <= 50 && ! KodeEvaluasi::where('kode', $selectedKelas->kode_kelas)->exists()
                 ? $selectedKelas->kode_kelas
                 : KodeEvaluasi::generateKode($selectedKelas->kode_kelas);
         } else {
@@ -203,6 +223,14 @@ class EvaluasiController extends Controller
             $resolvedKelasId = Kelas::whereRaw('UPPER(kode_kelas) = ?', [strtoupper($finalKode)])->value('id');
         }
 
+        $expiredAt = null;
+        if ($request->filled('expired_at')) {
+            $rawExp    = trim((string) $request->input('expired_at'));
+            $expiredAt = preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawExp)
+                ? Carbon::parse($rawExp)->endOfDay()
+                : Carbon::parse($rawExp);
+        }
+
         $kode = KodeEvaluasi::create([
             'instruktur_id' => $request->instruktur_id ?: null,
             'kelas_id'      => $resolvedKelasId,
@@ -211,7 +239,7 @@ class EvaluasiController extends Controller
             'is_active'     => true,
             'keterangan'    => $request->keterangan,
             'max_pengisian' => $request->max_pengisian ?: null,
-            'expired_at'    => $request->expired_at ?: null,
+            'expired_at'    => $expiredAt,
             'jumlah_diisi'  => 0,
         ]);
 

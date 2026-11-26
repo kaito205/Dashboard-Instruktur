@@ -97,13 +97,14 @@ class PenggunaController extends Controller
     {
         Gate::authorize('update', $pengguna);
 
-        if ($pengguna->id === auth()->id() && $request->role !== auth()->user()->role) {
+        if ($request->filled('role') && $request->input('role') !== $pengguna->role && ! Gate::allows('changeRole', $pengguna)) {
             return back()->withErrors(['role' => 'Anda tidak dapat mengubah role akun Anda sendiri.']);
         }
 
         $data = $request->validated();
 
-        if (!empty($data['password'])) {
+        $passwordChanged = ! empty($data['password']);
+        if ($passwordChanged) {
             $data['password'] = Hash::make($data['password']);
         } else {
             unset($data['password']);
@@ -119,20 +120,50 @@ class PenggunaController extends Controller
         $previousRole     = $pengguna->role;
         $roleDetached     = false;
         $syncedInstruktur = null;
+        $oldFotoToDelete  = null;
+        $blockedError     = null;
 
-        DB::transaction(function () use ($pengguna, $data, $request, $previousRole, &$roleDetached, &$syncedInstruktur) {
-            if ($request->hasFile('foto_profil')) {
-                if ($pengguna->foto_profil) {
-                    Storage::disk('public')->delete($pengguna->foto_profil);
+        DB::transaction(function () use (
+            $pengguna,
+            $data,
+            $request,
+            $previousRole,
+            $passwordChanged,
+            &$roleDetached,
+            &$syncedInstruktur,
+            &$oldFotoToDelete,
+            &$blockedError
+        ) {
+            if ($previousRole === 'admin' && (($data['role'] ?? $previousRole) !== 'admin' || empty($data['is_active']))) {
+                $admins = User::byRole('admin')->lockForUpdate()->get(['id', 'is_active']);
+                $remainingActiveAdmins = $admins->filter(
+                    fn (User $u) => (int) $u->id !== (int) $pengguna->id && $u->is_active
+                )->count();
+
+                if ($remainingActiveAdmins < 1) {
+                    $blockedError = 'Tidak dapat menonaktifkan atau mengubah role admin aktif terakhir.';
+
+                    return;
                 }
-                $folder = ($data['role'] ?? $pengguna->role) === 'instruktur' ? 'instruktur/foto' : 'users/foto';
-                $data['foto_profil'] = $request->file('foto_profil')->store($folder, 'public');
+            }
+
+            if ($request->hasFile('foto_profil')) {
+                $folder   = ($data['role'] ?? $pengguna->role) === 'instruktur' ? 'instruktur/foto' : 'users/foto';
+                $newPhoto = $request->file('foto_profil')->store($folder, 'public');
+                if ($pengguna->foto_profil && $pengguna->foto_profil !== $newPhoto) {
+                    $oldFotoToDelete = $pengguna->foto_profil;
+                }
+                $data['foto_profil'] = $newPhoto;
             } else {
                 unset($data['foto_profil']);
             }
 
             $pengguna->update($data);
             $freshUser = $pengguna->fresh();
+
+            if ($passwordChanged && (int) $freshUser->id !== (int) auth()->id()) {
+                $freshUser->revokeActiveSessions();
+            }
 
             if ($previousRole === 'instruktur' && $freshUser->role !== 'instruktur') {
                 $linkedInstruktur = Instruktur::withTrashed()->where('user_id', $freshUser->id)->first();
@@ -159,10 +190,29 @@ class PenggunaController extends Controller
 
                     $roleDetached = true;
                 }
-            } elseif ($freshUser->role === 'instruktur') {
+            } elseif (
+                $freshUser->role === 'instruktur'
+                && (
+                    $previousRole !== 'instruktur'
+                    || $freshUser->is_active
+                    || Instruktur::withTrashed()->where('user_id', $freshUser->id)->exists()
+                )
+            ) {
                 $syncedInstruktur = $freshUser->syncInstrukturProfile();
             }
         });
+
+        if ($blockedError !== null) {
+            return back()->withInput()->with('error', $blockedError);
+        }
+
+        if ($oldFotoToDelete !== null) {
+            $stillUsed = User::where('foto_profil', $oldFotoToDelete)->exists()
+                || Instruktur::withTrashed()->where('foto_profil', $oldFotoToDelete)->exists();
+            if (! $stillUsed) {
+                Storage::disk('public')->delete($oldFotoToDelete);
+            }
+        }
 
         if ($roleDetached) {
             return redirect()->route('admin.pengguna.index')
@@ -186,10 +236,6 @@ class PenggunaController extends Controller
             return back()->with('error', 'Anda tidak dapat menghapus akun Anda sendiri.');
         }
 
-        if ($pengguna->role === 'admin' && User::byRole('admin')->count() <= 1) {
-            return back()->with('error', 'Tidak dapat menghapus admin terakhir. Tambahkan admin lain terlebih dahulu.');
-        }
-
         Gate::authorize('delete', $pengguna);
 
         if ($pengguna->isInstruktur()) {
@@ -202,9 +248,33 @@ class PenggunaController extends Controller
             }
         }
 
-        DB::transaction(function () use ($pengguna) {
-            $pengguna->delete();
+        $blockedError = null;
+
+        DB::transaction(function () use ($pengguna, &$blockedError) {
+            $target = User::whereKey($pengguna->id)->lockForUpdate()->first();
+            if (! $target) {
+                return;
+            }
+
+            if ($target->role === 'admin') {
+                $admins = User::byRole('admin')->lockForUpdate()->get(['id', 'is_active']);
+                $remainingActiveAdmins = $admins->filter(
+                    fn (User $u) => (int) $u->id !== (int) $target->id && $u->is_active
+                )->count();
+
+                if ($remainingActiveAdmins < 1) {
+                    $blockedError = 'Tidak dapat menghapus admin aktif terakhir. Tambahkan admin aktif lain terlebih dahulu.';
+
+                    return;
+                }
+            }
+
+            $target->delete();
         });
+
+        if ($blockedError !== null) {
+            return back()->with('error', $blockedError);
+        }
 
         return redirect()->route('admin.pengguna.index')
             ->with('success', 'Akun pengguna berhasil dihapus.');
@@ -218,12 +288,34 @@ class PenggunaController extends Controller
 
         Gate::authorize('toggleStatus', $pengguna);
 
-        if ($pengguna->role === 'admin' && $pengguna->is_active && User::byRole('admin')->where('is_active', true)->count() <= 1) {
-            return back()->with('error', 'Tidak dapat menonaktifkan admin aktif terakhir.');
+        $blockedError = null;
+        $newState     = $pengguna->is_active;
+
+        DB::transaction(function () use ($pengguna, &$blockedError, &$newState) {
+            $target = User::whereKey($pengguna->id)->lockForUpdate()->firstOrFail();
+
+            if ($target->role === 'admin' && $target->is_active) {
+                $admins = User::byRole('admin')->lockForUpdate()->get(['id', 'is_active']);
+                $remainingActiveAdmins = $admins->filter(
+                    fn (User $u) => (int) $u->id !== (int) $target->id && $u->is_active
+                )->count();
+
+                if ($remainingActiveAdmins < 1) {
+                    $blockedError = 'Tidak dapat menonaktifkan admin aktif terakhir.';
+
+                    return;
+                }
+            }
+
+            $newState = ! $target->is_active;
+            $target->update(['is_active' => $newState]);
+        });
+
+        if ($blockedError !== null) {
+            return back()->with('error', $blockedError);
         }
 
-        $pengguna->update(['is_active' => !$pengguna->is_active]);
-        $status = $pengguna->is_active ? 'diaktifkan' : 'dinonaktifkan';
+        $status = $newState ? 'diaktifkan' : 'dinonaktifkan';
 
         return back()->with('success', "Akun {$pengguna->name} berhasil {$status}.");
     }
@@ -240,6 +332,11 @@ class PenggunaController extends Controller
                 'password.confirmed' => 'Konfirmasi password baru tidak cocok.',
             ]);
             $pengguna->update(['password' => Hash::make($request->password)]);
+            if ((int) $pengguna->id !== (int) auth()->id()) {
+                $pengguna->revokeActiveSessions();
+            } else {
+                $pengguna->revokeOtherSessions($request->hasSession() ? $request->session()->getId() : null, $request->password);
+            }
 
             return back()->with('success', "Password untuk {$pengguna->name} berhasil diperbarui.");
         }
@@ -250,6 +347,11 @@ class PenggunaController extends Controller
             . strtolower(Str::random(2));
 
         $pengguna->update(['password' => Hash::make($newPassword)]);
+        if ((int) $pengguna->id !== (int) auth()->id()) {
+            $pengguna->revokeActiveSessions();
+        } else {
+            $pengguna->revokeOtherSessions($request->hasSession() ? $request->session()->getId() : null, $newPassword);
+        }
 
         return back()
             ->with('success', "Password untuk {$pengguna->name} berhasil direset secara otomatis. Salin password sementara pada kotak di bawah.")

@@ -40,6 +40,11 @@ class StoreKelasRequest extends FormRequest
         $routeKelas = $this->route('kelas');
         $ignoreId = $routeKelas instanceof Kelas ? $routeKelas->id : $routeKelas;
 
+        $periodeSelesaiRules = ['nullable', 'date'];
+        if ($this->filled('periode_mulai')) {
+            $periodeSelesaiRules[] = 'after_or_equal:periode_mulai';
+        }
+
         return [
             'kode_kelas' => [
                 'required',
@@ -53,7 +58,7 @@ class StoreKelasRequest extends FormRequest
             'kuota_peserta'     => ['required', 'integer', 'min:1', 'max:1000'],
             'ruangan_default'   => ['nullable', 'string', 'max:100'],
             'periode_mulai'     => ['nullable', 'date'],
-            'periode_selesai'   => ['nullable', 'date', 'after_or_equal:periode_mulai'],
+            'periode_selesai'   => $periodeSelesaiRules,
             'status'            => ['required', Rule::in(array_keys(Kelas::STATUS_LIST))],
             'keterangan'        => ['nullable', 'string', 'max:1000'],
         ];

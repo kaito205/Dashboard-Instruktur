@@ -328,8 +328,18 @@ class ImportExportAndReadinessTest extends TestCase
             'status'           => 'terjadwal',
         ]);
 
-        // Tambah evaluasi peserta bernilai tinggi agar skor gabungan Budi berada di atas batas Cukup (60)
-        // sehingga fokus pengujian hanya pada 1 peringatan Jurnal dan 1 pengingat Jadwal besok.
+        // Budi hadir mengajar & mendapat evaluasi tinggi agar skor gabungan berada di atas batas Cukup (75.0 >= 60),
+        // sehingga fokus pengujian hanya pada 1 peringatan Jurnal belum diisi dan 1 pengingat Jadwal besok.
+        Absensi::create([
+            'instruktur_id' => $this->instruktur->id,
+            'jadwal_id'     => $overdueJadwal->id,
+            'tanggal'       => $overdueDate->toDateString(),
+            'jam_checkin'   => '08:00',
+            'jam_checkout'  => '10:00',
+            'status'        => 'hadir',
+            'sumber'        => 'checkin_app',
+        ]);
+
         Evaluasi::create([
             'instruktur_id' => $this->instruktur->id,
             'jadwal_id'     => $overdueJadwal->id,

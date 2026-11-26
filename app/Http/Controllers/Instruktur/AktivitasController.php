@@ -43,7 +43,7 @@ class AktivitasController extends Controller
             ->whereIn('id', $dedupIdsQuery)
             ->when($dari !== '', fn ($q) => $q->whereDate('tanggal', '>=', $dari))
             ->when($sampai !== '', fn ($q) => $q->whereDate('tanggal', '<=', $sampai))
-            ->when($jadwalFilter !== '', fn ($q) => $q->where('jadwal_id', (int) $jadwalFilter)->whereHas('jadwal', fn ($jq) => $jq->where('instruktur_id', $instrukturId)));
+            ->when($jadwalFilter !== '', fn ($q) => $q->where('jadwal_id', (int) $jadwalFilter));
 
         if ($sort === 'terlama') {
             $query->orderBy('tanggal')->orderBy('id');
@@ -123,7 +123,7 @@ class AktivitasController extends Controller
         if ($pageDates !== []) {
             $absensisPage = Absensi::where('instruktur_id', $instruktur->id)
                 ->whereNotNull('jam_checkin')
-                ->whereIn(DB::raw('DATE(tanggal)'), $pageDates)
+                ->whereIn('tanggal', $pageDates)
                 ->get(['jadwal_id', 'tanggal']);
 
             $byJadwalDate = [];
@@ -148,18 +148,19 @@ class AktivitasController extends Controller
             }
         }
 
-        $nowWib    = now('Asia/Jakarta');
-        $occDari   = $dari !== '' ? $dari : $nowWib->copy()->startOfMonth()->toDateString();
-        $occSampai = $sampai !== '' ? $sampai : $nowWib->toDateString();
+        $nowWib       = now('Asia/Jakarta');
+        $occDari      = $dari !== '' ? $dari : $nowWib->copy()->startOfMonth()->toDateString();
+        $occSampai    = $sampai !== '' ? $sampai : $nowWib->toDateString();
+        $occSampaiEnd = str_contains($occSampai, ':') ? $occSampai : ($occSampai . ' 23:59:59');
 
-        $jadwalsPeriode = Jadwal::with('instruktur')
+        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
             ->where('instruktur_id', $instruktur->id)
             ->where('status', '!=', 'dibatalkan')
             ->periode($occDari, $occSampai)
             ->get();
 
         $aktivitasPeriode = AktivitasMengajar::where('instruktur_id', $instruktur->id)
-            ->whereBetween('tanggal', [$occDari, $occSampai])
+            ->whereBetween('tanggal', [$occDari, $occSampaiEnd])
             ->get(['id', 'jadwal_id', 'tanggal', 'status_konfirmasi']);
 
         $sesiTerlewatAll   = $this->occurrenceService->getMissingActivityOccurrences($jadwalsPeriode, $aktivitasPeriode, $occDari, $occSampai, $nowWib);
@@ -199,7 +200,18 @@ class AktivitasController extends Controller
             'eskalasi_count'        => $eskalasiCount,
         ];
 
-        $jadwalOptionsJson = $jadwals->mapWithKeys(function (Jadwal $j) {
+        $ownRiwayatJadwalIds = AktivitasMengajar::where('instruktur_id', $instruktur->id)
+            ->whereNotNull('jadwal_id')
+            ->distinct()
+            ->pluck('jadwal_id')
+            ->diff($jadwals->pluck('id'))
+            ->values();
+
+        $reassignedJadwals = $ownRiwayatJadwalIds->isNotEmpty()
+            ? Jadwal::whereIn('id', $ownRiwayatJadwalIds)->get()
+            : collect();
+
+        $jadwalOptionsJson = $jadwals->concat($reassignedJadwals)->mapWithKeys(function (Jadwal $j) {
             return [
                 $j->id => [
                     'id'               => $j->id,
@@ -238,14 +250,26 @@ class AktivitasController extends Controller
     public function update(Request $request, Jadwal $jadwal)
     {
         $instruktur = $this->resolveOwnInstruktur();
-        abort_unless($instruktur && (int) $jadwal->instruktur_id === (int) $instruktur->id, 403);
+        abort_unless($instruktur !== null, 403);
+
+        $isPemilikJadwal = (int) $jadwal->instruktur_id === (int) $instruktur->id;
+        if (! $isPemilikJadwal) {
+            $punyaJurnalMilikSendiri = AktivitasMengajar::where('jadwal_id', $jadwal->id)
+                ->where('instruktur_id', $instruktur->id)
+                ->exists();
+            abort_unless($punyaJurnalMilikSendiri, 403);
+        }
+
+        if ($isPemilikJadwal && $jadwal->status === 'dibatalkan') {
+            return back()->with('error', 'Jadwal yang sudah dibatalkan tidak dapat diisi laporan aktivitas.');
+        }
 
         $validated = $request->validate([
             'tanggal'              => ['required', 'date'],
             'jam_mulai_aktual'     => ['required', 'date_format:H:i'],
             'jam_selesai_aktual'   => ['required', 'date_format:H:i', 'after:jam_mulai_aktual'],
             'materi_disampaikan'   => ['required', 'string', 'max:255'],
-            'tautan_materi'        => ['nullable', 'url', 'max:255'],
+            'tautan_materi'        => ['nullable', 'url:http,https', 'max:255'],
             'jumlah_peserta_hadir' => ['required', 'integer', 'min:0', 'max:1000'],
             'status_konfirmasi'    => ['required', 'in:dikonfirmasi,tidak_terlaksana'],
             'catatan'              => ['nullable', 'string', 'max:1000'],
@@ -254,7 +278,7 @@ class AktivitasController extends Controller
             'file_dokumentasi'     => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:5120'],
         ], [
             'materi_disampaikan.required'   => 'Materi yang disampaikan wajib diisi.',
-            'tautan_materi.url'             => 'Tautan modul harus berupa URL yang valid (contoh: https://...).',
+            'tautan_materi.url'             => 'Tautan modul harus berupa URL web yang valid (http:// atau https://).',
             'jumlah_peserta_hadir.required' => 'Jumlah peserta hadir wajib diisi.',
             'jam_selesai_aktual.after'      => 'Jam selesai aktual harus setelah jam mulai aktual.',
         ]);
@@ -262,18 +286,23 @@ class AktivitasController extends Controller
         $tanggalLaporan = $jadwal->tanggal ? $jadwal->tanggal->toDateString() : $validated['tanggal'];
 
         $aktivitas = AktivitasMengajar::where('jadwal_id', $jadwal->id)
+            ->where('instruktur_id', $instruktur->id)
             ->whereDate('tanggal', $tanggalLaporan)
             ->first();
 
-        if (!$aktivitas && !$jadwal->is_pola_mingguan) {
+        if (! $aktivitas && $isPemilikJadwal && ! $jadwal->is_pola_mingguan) {
             $aktivitas = AktivitasMengajar::where('jadwal_id', $jadwal->id)->first();
+        }
+
+        if (! $isPemilikJadwal && ! $aktivitas) {
+            abort(403, 'Jadwal ini telah dialihkan ke instruktur lain untuk tanggal tersebut.');
         }
 
         if ($aktivitas && in_array($aktivitas->status_verifikasi, ['diverifikasi', 'disetujui'], true)) {
             return back()->with('error', 'Laporan aktivitas ini sudah diverifikasi Supervisor dan terkunci. Hubungi Supervisor atau Admin jika perlu perubahan.');
         }
 
-        if (! $jadwal->berlakuPadaTanggal($tanggalLaporan)) {
+        if ($isPemilikJadwal && ! $jadwal->berlakuPadaTanggal($tanggalLaporan)) {
             $alasanPenyesuaian = trim((string) ($validated['catatan'] ?? '')) . trim((string) ($validated['kendala_kegiatan'] ?? ''));
             if (mb_strlen($alasanPenyesuaian) < 10) {
                 $hariDipilih = Jadwal::hariDariTanggal($tanggalLaporan);
@@ -292,14 +321,16 @@ class AktivitasController extends Controller
                 ->with('error', 'Bukti dokumentasi (foto atau PDF) wajib diunggah untuk laporan dengan status Terlaksana.');
         }
 
-        DB::transaction(function () use ($request, $instruktur, $jadwal, $validated, $tanggalLaporan, $aktivitas) {
+        $oldFileToDelete = null;
+
+        DB::transaction(function () use ($request, $instruktur, $jadwal, $validated, $tanggalLaporan, $aktivitas, $isPemilikJadwal, &$oldFileToDelete) {
             $filePath = $aktivitas?->file_dokumentasi;
             if ($request->hasFile('file_dokumentasi')) {
-                if ($filePath) {
-                    Storage::disk('local')->delete($filePath);
-                    Storage::disk('public')->delete($filePath);
+                $newFilePath = $request->file('file_dokumentasi')->store('aktivitas/dokumentasi', 'local');
+                if ($filePath && $filePath !== $newFilePath) {
+                    $oldFileToDelete = $filePath;
                 }
-                $filePath = $request->file('file_dokumentasi')->store('aktivitas/dokumentasi', 'local');
+                $filePath = $newFilePath;
             }
 
             $payload = [
@@ -318,6 +349,8 @@ class AktivitasController extends Controller
                 'file_dokumentasi'     => $filePath,
                 'confirmed_at'         => $validated['status_konfirmasi'] === 'dikonfirmasi' ? now() : null,
                 'status_verifikasi'    => 'menunggu',
+                'verified_by'          => null,
+                'verified_at'          => null,
             ];
 
             if ($aktivitas) {
@@ -332,10 +365,15 @@ class AktivitasController extends Controller
                 ->where('id', '!=', $aktivitas->id)
                 ->delete();
 
-            if (! $jadwal->is_pola_mingguan && $jadwal->status !== 'dibatalkan' && $validated['status_konfirmasi'] === 'dikonfirmasi') {
+            if ($isPemilikJadwal && ! $jadwal->is_pola_mingguan && $jadwal->status !== 'dibatalkan' && $validated['status_konfirmasi'] === 'dikonfirmasi') {
                 $jadwal->update(['status' => 'selesai']);
             }
         });
+
+        if ($oldFileToDelete !== null) {
+            Storage::disk('local')->delete($oldFileToDelete);
+            Storage::disk('public')->delete($oldFileToDelete);
+        }
 
         return back()->with('success', "Laporan aktivitas mengajar untuk kelas {$jadwal->nama_kelas} ({$validated['materi_disampaikan']}) berhasil disimpan dan menunggu verifikasi Supervisor.");
     }
@@ -421,18 +459,19 @@ class AktivitasController extends Controller
             $sort
         )->get();
 
-        $nowWib    = now('Asia/Jakarta');
-        $occDari   = $dari !== '' ? $dari : $nowWib->copy()->startOfMonth()->toDateString();
-        $occSampai = $sampai !== '' ? $sampai : $nowWib->toDateString();
+        $nowWib       = now('Asia/Jakarta');
+        $occDari      = $dari !== '' ? $dari : $nowWib->copy()->startOfMonth()->toDateString();
+        $occSampai    = $sampai !== '' ? $sampai : $nowWib->toDateString();
+        $occSampaiEnd = str_contains($occSampai, ':') ? $occSampai : ($occSampai . ' 23:59:59');
 
-        $jadwalsPeriode = Jadwal::with('instruktur')
+        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
             ->where('instruktur_id', $instruktur->id)
             ->where('status', '!=', 'dibatalkan')
             ->periode($occDari, $occSampai)
             ->get();
 
         $aktivitasPeriode = AktivitasMengajar::where('instruktur_id', $instruktur->id)
-            ->whereBetween('tanggal', [$occDari, $occSampai])
+            ->whereBetween('tanggal', [$occDari, $occSampaiEnd])
             ->get(['id', 'jadwal_id', 'tanggal', 'status_konfirmasi']);
 
         $sesiTerlewatTotal   = $this->occurrenceService->getMissingActivityOccurrences($jadwalsPeriode, $aktivitasPeriode, $occDari, $occSampai, $nowWib)->count();

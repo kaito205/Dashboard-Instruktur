@@ -181,7 +181,11 @@ class DashboardController extends Controller
                 : 'Belum ada catatan presensi pada periode ini',
         ];
 
-        $todayJadwals = Jadwal::with(['aktivitasMengajar', 'absensis' => fn ($q) => $q->whereDate('tanggal', $todayStr)])
+        $todayJadwals = Jadwal::with([
+            'instruktur.cutis',
+            'aktivitasMengajars' => fn ($q) => $q->whereDate('tanggal', $todayStr)->orderByDesc('id'),
+            'absensis'           => fn ($q) => $q->whereDate('tanggal', $todayStr),
+        ])
             ->where('instruktur_id', $instruktur->id)
             ->where(function ($q) use ($todayStr, $hariIni) {
                 $q->whereDate('tanggal', $todayStr)
@@ -198,7 +202,8 @@ class DashboardController extends Controller
         $bukaSebelumMenit = (int) \App\Models\Setting::get('checkin_buka_sebelum_menit', '30');
 
         $mySchedule = $todayJadwals->map(function (Jadwal $j) use ($todayStr, $nowWib, $bukaSebelumMenit) {
-            $konfirmasi   = $j->aktivitasMengajar?->status_konfirmasi ?? 'belum_dikonfirmasi';
+            $aktHariIni   = $j->aktivitasMengajars->first();
+            $konfirmasi   = $aktHariIni?->status_konfirmasi ?? 'belum_dikonfirmasi';
             $absenHariIni = $j->absensis->first();
             $liveStatus   = $this->occurrenceService->resolveLiveSessionStatus($j, $todayStr, $absenHariIni, $nowWib);
             $eligibility  = $this->occurrenceService->resolveCheckinEligibility($j, $todayStr, $absenHariIni, $bukaSebelumMenit, $nowWib);
@@ -219,7 +224,7 @@ class DashboardController extends Controller
                 'status_code'       => $liveStatus['code'],
                 'is_hari_ini'       => true,
                 'konfirmasi_status' => $konfirmasi,
-                'konfirmasi_label'  => $j->aktivitasMengajar?->status_label ?? 'Belum Dikonfirmasi',
+                'konfirmasi_label'  => $aktHariIni?->status_label ?? 'Belum Dikonfirmasi',
                 'absensi_hari_ini'  => $absenHariIni,
                 'tanggal_sesi'      => $todayStr,
                 'has_checkin'       => $hasCheckin,
@@ -334,13 +339,15 @@ class DashboardController extends Controller
             ];
         })->all();
 
+        $sampaiEnd = str_contains($sampai, ':') ? $sampai : ($sampai . ' 23:59:59');
+
         $allAbsensisPeriodeRaw = Absensi::with('jadwal')
             ->where('instruktur_id', $instruktur->id)
-            ->whereBetween('tanggal', [$dari, $sampai])
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
             ->get(['id', 'instruktur_id', 'jadwal_id', 'tanggal', 'status']);
         $allAbsensisPeriode = $this->occurrenceService->filterValidAttendanceRecords($allAbsensisPeriodeRaw);
 
-        $jadwalsPeriode = Jadwal::with('instruktur')
+        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
             ->where('instruktur_id', $instruktur->id)
             ->where('status', '!=', 'dibatalkan')
             ->periode($dari, $sampai)
@@ -356,9 +363,15 @@ class DashboardController extends Controller
         $alpaDates      = $allAbsensisPeriode->where('status', 'tidak_hadir')->map(fn (Absensi $a) => $a->tanggal?->toDateString())->filter()->concat($missedDates)->values();
 
         $jurnalDates = AktivitasMengajar::where('instruktur_id', $instruktur->id)
-            ->whereBetween('tanggal', [$dari, $sampai])
+            ->whereBetween('tanggal', [$dari, $sampaiEnd])
             ->where('status_konfirmasi', 'dikonfirmasi')
-            ->get(['tanggal'])
+            ->where(function ($q) {
+                $q->whereNull('jadwal_id')
+                    ->orWhereHas('jadwal', fn ($jq) => $jq->where('status', '!=', 'dibatalkan'));
+            })
+            ->orderByDesc('id')
+            ->get(['id', 'jadwal_id', 'tanggal'])
+            ->unique(fn (AktivitasMengajar $ak) => ($ak->jadwal_id ?? '0') . '|' . ($ak->tanggal?->toDateString() ?? (string) $ak->id))
             ->map(fn (AktivitasMengajar $ak) => $ak->tanggal?->toDateString())
             ->filter()
             ->values();

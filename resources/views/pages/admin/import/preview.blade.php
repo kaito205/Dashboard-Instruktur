@@ -77,6 +77,9 @@
     <a href="{{ route('admin.import.index') }}" class="inline-flex min-h-[44px] items-center rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Batal</a>
     <form method="POST" action="{{ route('admin.import.proses') }}">
         @csrf
+        @if (!empty($previewToken))
+            <input type="hidden" name="preview_token" value="{{ $previewToken }}">
+        @endif
         <button type="submit" class="inline-flex min-h-[44px] items-center rounded-lg bg-brand-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
             Simpan Data ({{ $summary['valid'] ?? 0 }} Baris Valid)
         </button>

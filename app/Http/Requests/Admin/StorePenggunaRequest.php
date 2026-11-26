@@ -14,6 +14,15 @@ class StorePenggunaRequest extends FormRequest
         return auth()->check() && auth()->user()->isAdmin();
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('email') && is_string($this->input('email'))) {
+            $this->merge([
+                'email' => mb_strtolower(trim($this->input('email'))),
+            ]);
+        }
+    }
+
     public function rules(): array
     {
         $routeParam = $this->route('pengguna');

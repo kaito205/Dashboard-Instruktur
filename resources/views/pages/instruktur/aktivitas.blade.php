@@ -342,7 +342,7 @@
                                 <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ $ra->jadwal?->nama_kelas ?? '-' }}</p>
                                 <p class="text-xs text-gray-600 dark:text-gray-300">{{ $ra->materi_disampaikan }}</p>
                                 <div class="mt-1 flex flex-wrap items-center gap-3 text-xs">
-                                    @if ($ra->tautan_materi)
+                                    @if ($ra->tautan_materi && preg_match('#^https?://#i', $ra->tautan_materi))
                                         <a href="{{ $ra->tautan_materi }}" target="_blank" rel="noopener" class="font-medium text-brand-600 underline dark:text-brand-400">Buka Modul</a>
                                     @endif
                                     @if ($ra->file_dokumentasi)

@@ -130,17 +130,23 @@
                                 @endif
                             </td>
                             <td class="whitespace-nowrap px-5 py-3.5">
-                                @php
-                                    $skorVal = (float) $ev->total_nilai;
-                                    $skorBadgeCls = $skorVal >= 80
-                                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                        : ($skorVal >= 60
-                                            ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                                            : 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300');
-                                @endphp
-                                <span class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold {{ $skorBadgeCls }}">
-                                    {{ number_format($skorVal, 2) }}
-                                </span>
+                                @if ($ev->total_nilai === null)
+                                    <span class="inline-flex items-center rounded-md bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                                        -
+                                    </span>
+                                @else
+                                    @php
+                                        $skorBadgeCls = match ($ev->nilai_color) {
+                                            'emerald' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+                                            'blue'    => 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
+                                            'amber'   => 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
+                                            default   => 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300',
+                                        };
+                                    @endphp
+                                    <span class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold {{ $skorBadgeCls }}">
+                                        {{ number_format((float) $ev->total_nilai, 2) }}
+                                    </span>
+                                @endif
                             </td>
                             <td class="max-w-xs px-5 py-3.5 text-xs text-gray-700 dark:text-gray-300">
                                 {{ $ev->komentar_peserta ?: '-' }}

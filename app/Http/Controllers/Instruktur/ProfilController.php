@@ -50,23 +50,29 @@ class ProfilController extends Controller
             'foto_profil.max'   => 'Ukuran foto maksimal 2MB.',
         ]);
 
-        DB::transaction(function () use ($instruktur, $user, $validated, $request) {
+        $oldPhotoToDelete = null;
+
+        DB::transaction(function () use ($instruktur, $user, $validated, $request, &$oldPhotoToDelete) {
             $updatePayload = [
                 'no_telepon' => $validated['no_telepon'] ?? null,
                 'alamat'     => $validated['alamat'] ?? null,
             ];
 
             if ($request->hasFile('foto_profil')) {
-                if ($instruktur->foto_profil && Storage::disk('public')->exists($instruktur->foto_profil)) {
-                    Storage::disk('public')->delete($instruktur->foto_profil);
+                $newPhoto = $request->file('foto_profil')->store('instruktur/foto', 'public');
+                if ($instruktur->foto_profil && $instruktur->foto_profil !== $newPhoto) {
+                    $oldPhotoToDelete = $instruktur->foto_profil;
                 }
-                $newPhoto                     = $request->file('foto_profil')->store('instruktur/foto', 'public');
                 $updatePayload['foto_profil'] = $newPhoto;
                 $user->update(['foto_profil' => $newPhoto]);
             }
 
             $instruktur->update($updatePayload);
         });
+
+        if ($oldPhotoToDelete !== null && Storage::disk('public')->exists($oldPhotoToDelete)) {
+            Storage::disk('public')->delete($oldPhotoToDelete);
+        }
 
         return back()->with('success', 'Profil instruktur Anda berhasil diperbarui.');
     }
@@ -79,10 +85,11 @@ class ProfilController extends Controller
 
         $request->validate([
             'password_lama' => ['required', 'string'],
-            'password_baru' => ['required', 'confirmed', Password::min(8)],
+            'password_baru' => ['required', 'confirmed', Password::min(8)->letters()->mixedCase()->numbers()],
         ], [
             'password_lama.required'  => 'Password saat ini wajib diisi.',
             'password_baru.required'  => 'Password baru wajib diisi.',
+            'password_baru.min'       => 'Password baru minimal 8 karakter dan wajib mengandung huruf besar, huruf kecil, serta angka.',
             'password_baru.confirmed' => 'Konfirmasi password baru tidak cocok.',
         ]);
 
@@ -92,6 +99,10 @@ class ProfilController extends Controller
         }
 
         $user->update(['password' => Hash::make($request->password_baru)]);
+        $user->revokeOtherSessions(
+            $request->hasSession() ? $request->session()->getId() : null,
+            $request->password_baru
+        );
 
         return back()->with('success', 'Password akun instruktur Anda berhasil diperbarui.');
     }
