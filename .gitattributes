@@ -6,6 +6,16 @@
 *.md diff=markdown
 *.php diff=php
 
+/.agents export-ignore
+/.claude export-ignore
 /.github export-ignore
+/.editorconfig export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/AGENTS.md export-ignore
+/AUDIT_PROGRESS.md export-ignore
+/CLAUDE.md export-ignore
+/phpunit.xml export-ignore
+/tests export-ignore
 CHANGELOG.md export-ignore
 .styleci.yml export-ignore

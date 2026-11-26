@@ -178,7 +178,9 @@ class KinerjaCalculationService
         string $sampai,
         ?Kelas $selectedKelas = null
     ): array {
-        $instruktur->loadMissing('cutis');
+        if (Instruktur::hasCutiTable()) {
+            $instruktur->loadMissing('cutis');
+        }
         $sampaiEnd = Carbon::parse($sampai)->toDateString() . ' 23:59:59';
 
         if ($selectedKelas !== null) {
@@ -637,20 +639,24 @@ class KinerjaCalculationService
             })
             : Instruktur::aktif();
 
+        $hasCutiTbl = Instruktur::hasCutiTable();
+
         $instrukturList = $baseInstrukturQuery
             ->when($instrukturId && $instrukturId !== 'all', fn ($q) => $q->where('id', $instrukturId))
             ->with(
                 $selectedKelas !== null
-                    ? ['cutis']
-                    : [
-                        'cutis',
-                        'absensis'             => fn ($q) => $q->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd]),
-                        'evaluasis'            => fn ($q) => $q->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']),
-                        'jadwals'              => fn ($q) => $q->periode($dari, $sampai)
-                            ->when($statusFilter && in_array($statusFilter, ['terjadwal', 'berlangsung', 'selesai', 'dibatalkan'], true), fn ($sq) => $sq->where('status', $statusFilter)),
-                        'aktivitasMengajars'   => fn ($q) => $q->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd]),
-                        'observasiSupervisors' => fn ($q) => $q->whereBetween('tanggal', [$dari, $sampaiEnd]),
-                    ]
+                    ? ($hasCutiTbl ? ['cutis'] : [])
+                    : array_merge(
+                        $hasCutiTbl ? ['cutis'] : [],
+                        [
+                            'absensis'             => fn ($q) => $q->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd]),
+                            'evaluasis'            => fn ($q) => $q->whereBetween('created_at', [$dari . ' 00:00:00', $sampai . ' 23:59:59']),
+                            'jadwals'              => fn ($q) => $q->periode($dari, $sampai)
+                                ->when($statusFilter && in_array($statusFilter, ['terjadwal', 'berlangsung', 'selesai', 'dibatalkan'], true), fn ($sq) => $sq->where('status', $statusFilter)),
+                            'aktivitasMengajars'   => fn ($q) => $q->with('jadwal')->whereBetween('tanggal', [$dari, $sampaiEnd]),
+                            'observasiSupervisors' => fn ($q) => $q->whereBetween('tanggal', [$dari, $sampaiEnd]),
+                        ]
+                    )
             )
             ->orderBy('nama_lengkap')
             ->get();

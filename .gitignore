@@ -15,6 +15,7 @@
 /.vscode
 /.zed
 /auth.json
+/database/*.sqlite
 /node_modules
 /public/build
 /public/hot
@@ -23,6 +24,7 @@
 /storage/pail
 /vendor
 AGENTS.md
+AUDIT_PROGRESS.md
 CLAUDE.md
 Homestead.json
 Homestead.yaml

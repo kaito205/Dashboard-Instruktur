@@ -47,14 +47,17 @@ class InstrukturController extends Controller
     {
         Gate::authorize('view', $instruktur);
 
-        $instruktur->load([
+        $relations = [
             'user',
-            'cutis',
             'sertifikasis',
             'jadwals'            => fn ($q) => $q->orderByRaw('CASE WHEN is_pola_mingguan = 1 THEN 0 ELSE 1 END')->latest('tanggal')->take(10),
             'aktivitasMengajars' => fn ($q) => $q->with('jadwal.kelas')->latest('tanggal')->take(10),
             'kodeEvaluasis'      => fn ($q) => $q->withCount('evaluasis')->latest(),
-        ]);
+        ];
+        if (Instruktur::hasCutiTable()) {
+            $relations[] = 'cutis';
+        }
+        $instruktur->load($relations);
 
         $dari      = now()->subDays(30)->toDateString();
         $sampai    = now()->toDateString();

@@ -182,7 +182,7 @@ class DashboardController extends Controller
         ];
 
         $todayJadwals = Jadwal::with([
-            'instruktur.cutis',
+            \App\Models\Instruktur::jadwalInstrukturRelation(),
             'aktivitasMengajars' => fn ($q) => $q->whereDate('tanggal', $todayStr)->orderByDesc('id'),
             'absensis'           => fn ($q) => $q->whereDate('tanggal', $todayStr),
         ])
@@ -347,7 +347,7 @@ class DashboardController extends Controller
             ->get(['id', 'instruktur_id', 'jadwal_id', 'tanggal', 'status']);
         $allAbsensisPeriode = $this->occurrenceService->filterValidAttendanceRecords($allAbsensisPeriodeRaw);
 
-        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
+        $jadwalsPeriode = Jadwal::with(\App\Models\Instruktur::jadwalInstrukturRelation())
             ->where('instruktur_id', $instruktur->id)
             ->where('status', '!=', 'dibatalkan')
             ->periode($dari, $sampai)

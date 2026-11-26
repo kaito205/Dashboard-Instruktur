@@ -82,7 +82,8 @@ class OperationalAlertService
         $sekarang      = now();
         $batasEskalasi = $sekarang->copy()->subHours(48);
         $sampaiEnd     = str_contains($sampai, ':') ? $sampai : ($sampai . ' 23:59:59');
-        $aktivitasBelumDikonfirmasiRaw = AktivitasMengajar::with(['instruktur.cutis', 'jadwal'])
+        $insRel = Instruktur::jadwalInstrukturRelation();
+        $aktivitasBelumDikonfirmasiRaw = AktivitasMengajar::with([$insRel, 'jadwal'])
             ->where('status_konfirmasi', 'belum_dikonfirmasi')
             ->whereBetween('tanggal', [$dari, $sampaiEnd])
             ->where(function ($q) {
@@ -145,7 +146,7 @@ class OperationalAlertService
                 ];
             });
 
-        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
+        $jadwalsPeriode = Jadwal::with($insRel)
             ->where('status', '!=', 'dibatalkan')
             ->periode($dari, $sampai)
             ->get();
@@ -657,7 +658,9 @@ class OperationalAlertService
 
         // 3. Jurnal Aktivitas Belum Dikonfirmasi (hanya sesi yang sudah lewat jam selesainya)
         $sekarangIns = now();
-        $instruktur->loadMissing('cutis');
+        if (Instruktur::hasCutiTable()) {
+            $instruktur->loadMissing('cutis');
+        }
         $belumJurnal = AktivitasMengajar::with('jadwal')
             ->where('instruktur_id', $instruktur->id)
             ->where('status_konfirmasi', 'belum_dikonfirmasi')

@@ -6,28 +6,31 @@ use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class AdminSeeder extends Seeder
 {
     public function run(): void
     {
         $admin = User::firstOrNew(['email' => 'admin@lpkcti.id']);
-        $admin->name      = 'Administrator';
-        $admin->role      = 'admin';
-        $admin->is_active = true;
         if (! $admin->exists) {
-            $admin->password = Hash::make((string) env('ADMIN_INITIAL_PASSWORD', 'Admin@123'));
+            $admin->name      = 'Administrator';
+            $admin->role      = 'admin';
+            $admin->is_active = true;
+            $adminPlain       = $this->resolveInitialPassword('admin', 'admin@lpkcti.id');
+            $admin->password  = Hash::make($adminPlain);
+            $admin->save();
         }
-        $admin->save();
 
         $supervisor = User::firstOrNew(['email' => 'supervisor@lpkcti.id']);
-        $supervisor->name      = 'Supervisor LPK';
-        $supervisor->role      = 'supervisor';
-        $supervisor->is_active = true;
         if (! $supervisor->exists) {
-            $supervisor->password = Hash::make((string) env('SUPERVISOR_INITIAL_PASSWORD', 'Supervisor@123'));
+            $supervisor->name      = 'Supervisor LPK';
+            $supervisor->role      = 'supervisor';
+            $supervisor->is_active = true;
+            $spvPlain              = $this->resolveInitialPassword('supervisor', 'supervisor@lpkcti.id');
+            $supervisor->password  = Hash::make($spvPlain);
+            $supervisor->save();
         }
-        $supervisor->save();
 
         $settings = [
             ['key' => 'app_name',                   'value' => 'Dashboard Instruktur LPK CTI', 'group' => 'general'],
@@ -54,9 +57,24 @@ class AdminSeeder extends Seeder
         ];
 
         foreach ($settings as $setting) {
-            Setting::set($setting['key'], $setting['value'], $setting['group']);
+            Setting::setIfMissing($setting['key'], $setting['value'], $setting['group']);
+        }
+    }
+
+    private function resolveInitialPassword(string $configKey, string $email): string
+    {
+        $configured = trim((string) config("auth.initial_passwords.{$configKey}", ''));
+        if ($configured !== '') {
+            return $configured;
         }
 
-        $this->call(LpkCtiJadwalMingguanSeeder::class);
+        $generated = 'Cti'
+            . Str::upper(Str::random(4))
+            . random_int(1000, 9999)
+            . Str::lower(Str::random(5));
+
+        $this->command?->warn("Password awal acak dibuat untuk {$email}: {$generated} (Segera ganti setelah login pertama).");
+
+        return $generated;
     }
 }

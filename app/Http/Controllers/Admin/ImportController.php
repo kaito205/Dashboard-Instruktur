@@ -10,7 +10,9 @@ use App\Models\Instruktur;
 use App\Models\Jadwal;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 class ImportController extends Controller
@@ -163,85 +165,172 @@ class ImportController extends Controller
     {
         $this->authorizeManageImport();
 
-        $userId       = (int) auth()->id();
-        $previewToken = $this->sanitizePreviewToken($request->input('preview_token'));
-        $data         = $this->loadPreviewPayload($userId, $previewToken);
+        $userId            = (int) auth()->id();
+        $previewToken      = $this->sanitizePreviewToken($request->input('preview_token'));
+        $activePreviewPath = $this->resolvePreviewStoragePath($userId, $previewToken);
 
-        if (! $data) {
+        $lock = $activePreviewPath !== null
+            ? Cache::lock(self::previewLockKey($activePreviewPath), 600)
+            : null;
+
+        if ($lock !== null && ! $lock->get()) {
             return redirect()->route($this->routePrefix . '.index')
-                ->with('error', 'Sesi pratinjau sudah berakhir. Silakan unggah ulang berkas.');
+                ->with('error', 'Berkas pratinjau ini sedang diproses pada sesi lain. Mohon tunggu hingga selesai.');
         }
 
-        $berhasil        = 0;
-        $gagal           = 0;
-        $errors          = [];
-        $batchId         = 'import_' . now()->format('YmdHis') . '_' . substr(bin2hex(random_bytes(3)), 0, 6);
-        $isDate1904      = (bool) ($data['is_date_1904'] ?? false);
-        $seenBatchHashes = [];
-        $seenAbsensiRows = [];
+        try {
+            $data = $this->loadPreviewPayload($userId, $previewToken, false);
 
-        DB::transaction(function () use (
-            $data,
-            $batchId,
-            $isDate1904,
-            &$berhasil,
-            &$gagal,
-            &$errors,
-            &$seenBatchHashes,
-            &$seenAbsensiRows
-        ) {
-            $headers = $data['headers'];
-            $rows    = $data['rows'];
-            $jenis   = $data['jenis'];
+            if (! $data) {
+                return redirect()->route($this->routePrefix . '.index')
+                    ->with('error', 'Sesi pratinjau sudah berakhir. Silakan unggah ulang berkas.');
+            }
 
-            foreach ($rows as $index => $row) {
-                $nomor  = $index + 2;
-                $padded = array_slice(array_pad($row, count($headers), null), 0, count($headers));
-                $mapped = array_combine($headers, $padded);
+            $berhasil        = 0;
+            $gagal           = 0;
+            $errors          = [];
+            $batchId         = 'import_' . now()->format('YmdHis') . '_' . substr(bin2hex(random_bytes(3)), 0, 6);
+            $isDate1904      = (bool) ($data['is_date_1904'] ?? false);
+            $seenBatchHashes = [];
+            $seenAbsensiRows = [];
+
+            DB::transaction(function () use (
+                $data,
+                $batchId,
+                $isDate1904,
+                &$berhasil,
+                &$gagal,
+                &$errors,
+                &$seenBatchHashes,
+                &$seenAbsensiRows
+            ) {
+                $headers = $data['headers'];
+                $rows    = $data['rows'];
+                $jenis   = $data['jenis'];
+
+                foreach ($rows as $index => $row) {
+                    $nomor  = $index + 2;
+                    $padded = array_slice(array_pad($row, count($headers), null), 0, count($headers));
+                    $mapped = array_combine($headers, $padded);
+
+                    try {
+                        DB::transaction(function () use (
+                            $jenis,
+                            $mapped,
+                            $batchId,
+                            $isDate1904,
+                            $nomor,
+                            &$seenBatchHashes,
+                            &$seenAbsensiRows
+                        ) {
+                            if ($jenis === 'absensi') {
+                                $this->prosesAbsensi($mapped, $batchId, $isDate1904, $seenAbsensiRows, $nomor);
+                            } else {
+                                $this->prosesEvaluasi($mapped, $batchId, $isDate1904, $seenBatchHashes, $nomor);
+                            }
+                        });
+                        $berhasil++;
+                    } catch (\Throwable $e) {
+                        $gagal++;
+                        $errors[] = "Baris {$nomor}: " . $e->getMessage();
+                    }
+                }
+            });
+
+            $status = $gagal === 0 ? 'sukses' : ($berhasil === 0 ? 'gagal' : 'parsial');
+
+            ImportHistory::create([
+                'user_id'        => $userId,
+                'jenis'          => $data['jenis'],
+                'nama_file'      => $data['filename'],
+                'total_baris'    => count($data['rows']),
+                'baris_berhasil' => $berhasil,
+                'baris_gagal'    => $gagal,
+                'detail_error'   => $errors,
+                'status'         => $status,
+            ]);
+
+            $this->deletePreviewPayload($userId, $previewToken ?: ($data['preview_token'] ?? null));
+
+            $message = "Import selesai. Berhasil: {$berhasil} baris, Gagal/Dilewati: {$gagal} baris.";
+
+            return redirect()->route($this->routePrefix . '.index')
+                ->with($status === 'gagal' ? 'error' : 'success', $message)
+                ->with('import_errors', $errors);
+        } finally {
+            $lock?->release();
+        }
+    }
+
+    public function batalPreview(Request $request)
+    {
+        $this->authorizeManageImport();
+
+        $userId       = (int) auth()->id();
+        $previewToken = $this->sanitizePreviewToken($request->input('preview_token'));
+        $targetPath   = $this->resolvePreviewStoragePath($userId, $previewToken);
+
+        if ($targetPath !== null) {
+            $lock = Cache::lock(self::previewLockKey($targetPath), 5);
+            if (! $lock->get()) {
+                return redirect()->route($this->routePrefix . '.index')
+                    ->with('warning', 'Berkas pratinjau sedang diproses aktif sehingga tidak dapat dibatalkan saat ini.');
+            }
+
+            try {
+                $this->deletePreviewPayload($userId, $previewToken);
+            } finally {
+                $lock->release();
+            }
+        } else {
+            session()->forget('import_preview_' . $userId);
+        }
+
+        return redirect()->route($this->routePrefix . '.index')
+            ->with('success', 'Pratinjau import dibatalkan dan berkas sementara telah dibersihkan.');
+    }
+
+    public static function previewLockKey(string $filePath): string
+    {
+        return 'import_preview_lock:' . md5($filePath);
+    }
+
+    public static function purgeExpiredPreviews(int $ttlMinutes = 60): int
+    {
+        $disk = Storage::disk('local');
+        if (! $disk->exists(self::PREVIEW_STORAGE_DIR)) {
+            return 0;
+        }
+
+        $deleted = 0;
+        $cutoff  = now()->subMinutes(max(1, $ttlMinutes))->timestamp;
+
+        foreach ($disk->files(self::PREVIEW_STORAGE_DIR) as $filePath) {
+            try {
+                if ($disk->lastModified($filePath) >= $cutoff) {
+                    continue;
+                }
+
+                // Lewati penghapusan apabila berkas sedang dikunci oleh proses import aktif
+                $lock = Cache::lock(self::previewLockKey($filePath), 10);
+                if (! $lock->get()) {
+                    continue;
+                }
 
                 try {
-                    DB::transaction(function () use (
-                        $jenis,
-                        $mapped,
-                        $batchId,
-                        $isDate1904,
-                        $nomor,
-                        &$seenBatchHashes,
-                        &$seenAbsensiRows
-                    ) {
-                        if ($jenis === 'absensi') {
-                            $this->prosesAbsensi($mapped, $batchId, $isDate1904, $seenAbsensiRows, $nomor);
-                        } else {
-                            $this->prosesEvaluasi($mapped, $batchId, $isDate1904, $seenBatchHashes, $nomor);
-                        }
-                    });
-                    $berhasil++;
-                } catch (\Throwable $e) {
-                    $gagal++;
-                    $errors[] = "Baris {$nomor}: " . $e->getMessage();
+                    if ($disk->exists($filePath) && $disk->lastModified($filePath) < $cutoff) {
+                        $disk->delete($filePath);
+                        $deleted++;
+                    }
+                } finally {
+                    $lock->release();
                 }
+            } catch (\Throwable) {
+                // Abaikan jika berkas telah dihapus oleh proses paralel lain
             }
-        });
+        }
 
-        $status = $gagal === 0 ? 'sukses' : ($berhasil === 0 ? 'gagal' : 'parsial');
-
-        ImportHistory::create([
-            'user_id'        => $userId,
-            'jenis'          => $data['jenis'],
-            'nama_file'      => $data['filename'],
-            'total_baris'    => count($data['rows']),
-            'baris_berhasil' => $berhasil,
-            'baris_gagal'    => $gagal,
-            'detail_error'   => $errors,
-            'status'         => $status,
-        ]);
-
-        $this->deletePreviewPayload($userId, $previewToken ?: ($data['preview_token'] ?? null));
-
-        $message = "Import selesai. Berhasil: {$berhasil} baris, Gagal/Dilewati: {$gagal} baris.";
-        return redirect()->route($this->routePrefix . '.index')
-            ->with($status === 'gagal' ? 'error' : 'success', $message)
-            ->with('import_errors', $errors);
+        return $deleted;
     }
 
     private function sanitizePreviewToken(mixed $raw): ?string
@@ -260,23 +349,24 @@ class ImportController extends Controller
         return self::PREVIEW_STORAGE_DIR . '/preview_user_' . $userId . '.json';
     }
 
-    private function cleanupExpiredPreviews(): void
+    private function resolvePreviewStoragePath(int $userId, ?string $token = null): ?string
     {
         $disk = Storage::disk('local');
-        if (! $disk->exists(self::PREVIEW_STORAGE_DIR)) {
-            return;
-        }
-
-        $cutoff = now()->subHour()->timestamp;
-        foreach ($disk->files(self::PREVIEW_STORAGE_DIR) as $filePath) {
-            try {
-                if ($disk->lastModified($filePath) < $cutoff) {
-                    $disk->delete($filePath);
-                }
-            } catch (\Throwable) {
-                // Abaikan jika file sudah terhapus oleh proses lain
+        if ($token !== null && $token !== '') {
+            $tokenPath = $this->previewFilePath($userId, $token);
+            if ($disk->exists($tokenPath)) {
+                return $tokenPath;
             }
         }
+
+        $defaultPath = $this->previewFilePath($userId);
+
+        return $disk->exists($defaultPath) ? $defaultPath : null;
+    }
+
+    private function cleanupExpiredPreviews(): void
+    {
+        self::purgeExpiredPreviews(60);
     }
 
     private function storePreviewPayload(int $userId, array $payload, ?string $token = null): void
@@ -292,9 +382,11 @@ class ImportController extends Controller
         session()->forget('import_preview_' . $userId);
     }
 
-    private function loadPreviewPayload(int $userId, ?string $token = null): ?array
+    private function loadPreviewPayload(int $userId, ?string $token = null, bool $runCleanup = true): ?array
     {
-        $this->cleanupExpiredPreviews();
+        if ($runCleanup) {
+            $this->cleanupExpiredPreviews();
+        }
 
         $disk  = Storage::disk('local');
         $paths = [];
@@ -920,9 +1012,11 @@ class ImportController extends Controller
             'jam_checkout'  => $jamCheckout,
             'status'        => $status,
             'sumber'        => 'import',
-            'batch_import'  => $batchId,
             'keterangan'    => ! empty($row['keterangan']) ? trim((string) $row['keterangan']) : null,
         ];
+        if (Schema::hasColumn('absensis', 'batch_import')) {
+            $payload['batch_import'] = $batchId;
+        }
 
         if ($jamMulai !== null) {
             $payload['jam_mulai_jadwal'] = $jamMulai;
@@ -1691,10 +1785,11 @@ class ImportController extends Controller
 
     private function hasConflictingAbsensiInDb(array $candidate, ?string $excludeBatchId = null): bool
     {
+        $hasBatchCol  = Schema::hasColumn('absensis', 'batch_import');
         $existingRows = Absensi::where('instruktur_id', $candidate['instruktur_id'])
             ->whereDate('tanggal', $candidate['tanggal'])
             ->when(
-                $excludeBatchId !== null && $excludeBatchId !== '',
+                $hasBatchCol && $excludeBatchId !== null && $excludeBatchId !== '',
                 fn ($q) => $q->where(fn ($sub) => $sub->whereNull('batch_import')->orWhere('batch_import', '!=', $excludeBatchId))
             )
             ->get(['jadwal_id', 'jam_checkin', 'jam_checkout']);

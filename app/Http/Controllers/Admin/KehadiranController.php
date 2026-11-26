@@ -63,7 +63,7 @@ class KehadiranController extends Controller
             ->when($tab === 'absensi' && $sumber, fn ($q) => $q->where('sumber', $sumber))
             ->whereBetween('tanggal', [$dari, $sampaiEnd]);
 
-        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
+        $jadwalsPeriode = Jadwal::with(Instruktur::jadwalInstrukturRelation())
             ->where('status', '!=', 'dibatalkan')
             ->periode($dari, $sampai)
             ->when($instrukturId, fn ($q) => $q->where('instruktur_id', $instrukturId))

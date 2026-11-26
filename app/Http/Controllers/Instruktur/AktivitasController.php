@@ -153,7 +153,7 @@ class AktivitasController extends Controller
         $occSampai    = $sampai !== '' ? $sampai : $nowWib->toDateString();
         $occSampaiEnd = str_contains($occSampai, ':') ? $occSampai : ($occSampai . ' 23:59:59');
 
-        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
+        $jadwalsPeriode = Jadwal::with(\App\Models\Instruktur::jadwalInstrukturRelation())
             ->where('instruktur_id', $instruktur->id)
             ->where('status', '!=', 'dibatalkan')
             ->periode($occDari, $occSampai)
@@ -464,7 +464,7 @@ class AktivitasController extends Controller
         $occSampai    = $sampai !== '' ? $sampai : $nowWib->toDateString();
         $occSampaiEnd = str_contains($occSampai, ':') ? $occSampai : ($occSampai . ' 23:59:59');
 
-        $jadwalsPeriode = Jadwal::with('instruktur.cutis')
+        $jadwalsPeriode = Jadwal::with(\App\Models\Instruktur::jadwalInstrukturRelation())
             ->where('instruktur_id', $instruktur->id)
             ->where('status', '!=', 'dibatalkan')
             ->periode($occDari, $occSampai)

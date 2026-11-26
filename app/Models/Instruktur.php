@@ -14,6 +14,32 @@ class Instruktur extends Model
 {
     use SoftDeletes;
 
+    protected static ?bool $memoHasCutiTable = null;
+    protected static ?string $memoCutiContextId = null;
+
+    public static function hasCutiTable(): bool
+    {
+        $appObj = app();
+        $reqId  = $appObj->bound('request') ? (string) spl_object_id($appObj->make('request')) : 'cli';
+        $ctxId  = spl_object_id($appObj) . ':' . $reqId;
+
+        if (static::$memoCutiContextId !== $ctxId || static::$memoHasCutiTable === null) {
+            static::$memoCutiContextId = $ctxId;
+            try {
+                static::$memoHasCutiTable = Schema::hasTable('instruktur_cutis');
+            } catch (\Throwable) {
+                static::$memoHasCutiTable = false;
+            }
+        }
+
+        return static::$memoHasCutiTable;
+    }
+
+    public static function jadwalInstrukturRelation(): string
+    {
+        return static::hasCutiTable() ? 'instruktur.cutis' : 'instruktur';
+    }
+
     protected static function booted(): void
     {
         static::saved(function (self $instruktur): void {
@@ -123,7 +149,7 @@ class Instruktur extends Model
             ];
         }
 
-        if ($this->exists && Schema::hasTable('instruktur_cutis')) {
+        if ($this->exists && static::hasCutiTable()) {
             $riwayatCutis = $this->relationLoaded('cutis')
                 ? $this->cutis
                 : $this->cutis()->get();
@@ -214,7 +240,7 @@ class Instruktur extends Model
 
     public function syncRiwayatCuti(): void
     {
-        if (! $this->exists || ! Schema::hasTable('instruktur_cutis')) {
+        if (! $this->exists || ! static::hasCutiTable()) {
             return;
         }
 

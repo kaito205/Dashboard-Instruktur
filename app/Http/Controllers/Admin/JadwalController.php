@@ -97,7 +97,7 @@ class JadwalController extends Controller
         $nowWib      = now('Asia/Jakarta');
 
         $filteredQuery = Jadwal::with([
-            'instruktur.cutis',
+            Instruktur::jadwalInstrukturRelation(),
             'instrukturAsli',
             'instrukturPengganti',
             'aktivitasMengajar',

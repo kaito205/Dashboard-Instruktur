@@ -93,7 +93,7 @@ class DashboardController extends Controller
 
         $jadwalsAktifPeriode = $activeJadwalStatus === 'dibatalkan'
             ? collect()
-            : Jadwal::with('instruktur.cutis')
+            : Jadwal::with(Instruktur::jadwalInstrukturRelation())
                 ->where('status', '!=', 'dibatalkan')
                 ->when($activeJadwalStatus !== null, fn ($q) => $q->where('status', $activeJadwalStatus))
                 ->periode($dari, $sampai)

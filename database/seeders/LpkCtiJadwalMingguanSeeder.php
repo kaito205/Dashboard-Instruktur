@@ -11,6 +11,7 @@ use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class LpkCtiJadwalMingguanSeeder extends Seeder
 {
@@ -55,15 +56,23 @@ class LpkCtiJadwalMingguanSeeder extends Seeder
         $instrukturs = [];
         foreach ($instrukturData as $key => $row) {
             $user = User::firstOrNew(['email' => $row['email']]);
-            $user->name      = $row['nama_lengkap'];
-            $user->role      = 'instruktur';
-            $user->is_active = true;
             if (! $user->exists) {
-                $user->password = Hash::make((string) env('INSTRUKTUR_INITIAL_PASSWORD', 'Instruktur@123'));
+                $user->name      = $row['nama_lengkap'];
+                $user->role      = 'instruktur';
+                $user->is_active = true;
+                $configured      = trim((string) config('auth.initial_passwords.instruktur', ''));
+                if ($configured === '') {
+                    $configured = 'Cti'
+                        . Str::upper(Str::random(4))
+                        . random_int(1000, 9999)
+                        . Str::lower(Str::random(5));
+                    $this->command?->warn("Password awal contoh dibuat untuk {$row['email']}: {$configured}");
+                }
+                $user->password = Hash::make($configured);
+                $user->save();
             }
-            $user->save();
 
-            $instrukturs[$key] = Instruktur::updateOrCreate(
+            $instrukturs[$key] = Instruktur::firstOrCreate(
                 ['kode_instruktur' => $row['kode_instruktur']],
                 [
                     'user_id'         => $user->id,
@@ -240,7 +249,7 @@ class LpkCtiJadwalMingguanSeeder extends Seeder
         ];
 
         foreach ($settings as $s) {
-            Setting::set($s['key'], $s['value'], $s['group']);
+            Setting::setIfMissing($s['key'], $s['value'], $s['group']);
         }
     }
 }

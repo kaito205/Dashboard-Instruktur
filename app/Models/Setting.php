@@ -62,6 +62,24 @@ class Setting extends Model
         Cache::forget("setting_{$key}");
     }
 
+    public static function setIfMissing(string $key, $value, string $group = 'general'): bool
+    {
+        $record = static::firstOrCreate(
+            ['key' => $key],
+            ['value' => $value, 'group' => $group]
+        );
+
+        if ($record->wasRecentlyCreated) {
+            if (static::$memoizedSettings !== null) {
+                static::$memoizedSettings[$key] = $value;
+            }
+
+            Cache::forget("setting_{$key}");
+        }
+
+        return $record->wasRecentlyCreated;
+    }
+
     public static function clearMemo(): void
     {
         static::$memoizedSettings = null;

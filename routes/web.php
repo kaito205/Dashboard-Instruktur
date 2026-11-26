@@ -136,6 +136,7 @@ Route::prefix('admin')
             Route::get('/template/{jenis?}', [ImportController::class, 'downloadTemplate'])->name('template');
             Route::post('/preview',          [ImportController::class, 'preview'])->name('preview');
             Route::post('/proses',           [ImportController::class, 'proses'])->name('proses');
+            Route::post('/batal',            [ImportController::class, 'batalPreview'])->name('batal');
         });
 
         Route::prefix('evaluasi')->name('evaluasi.')->group(function () {

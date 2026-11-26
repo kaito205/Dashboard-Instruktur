@@ -66,7 +66,7 @@ class JadwalController extends Controller
         }
 
         $allInstrukturJadwals = Jadwal::with([
-            'instruktur.cutis',
+            \App\Models\Instruktur::jadwalInstrukturRelation(),
             'instrukturAsli',
             'instrukturPengganti',
             'kelas',

@@ -1,439 +1,175 @@
-# TailAdmin Laravel - Tailwind CSS Free Laravel Dashboard
+# Sistem Monitoring & Evaluasi Kinerja Instruktur LPK CTI
 
-**TailAdmin Laravel** is a modern, production-ready admin dashboard template powered by **Laravel 12**, **Tailwind CSS v4**, **Alpine.js**, and a clean, modular architecture. TailAdmin is one of the most popular Tailwind CSS dashboard now also available for Larvael. It’s designed for building fast, scalable admin panels, CRM dashboards, SaaS backends, and any data-driven application where clarity and performance matter.
-![TailAdmin - Next.js Dashboard Preview](./tailadmin-laravel.png)
+Aplikasi web berbasis Laravel 12 untuk pemantauan jadwal mengajar, presensi berbasis GPS, laporan aktivitas mengajar, evaluasi peserta pelatihan, observasi pengajaran, dan perhitungan skor kinerja instruktur pada **LPK Cipta Tungga Indonesia Ciamis**.
 
+---
 
-## Quick Links
+## Peran Pengguna
 
-* [✨ Get TailAdmin Laravel](https://tailadmin.com/laravel)
-* [📄 Documentation](https://tailadmin.com/docs)
-* [⬇️ Download](https://tailadmin.com/download)
-* [🌐 Live Demo](https://laravel-demo.tailadmin.com)
+1. **Administrator (`admin`):** Mengelola akun pengguna, data instruktur beserta sertifikasi dan riwayat cuti/izin, master kelas, jadwal mengajar (spesifik maupun pola mingguan), pengalihan jadwal, kehadiran manual, import data CSV/Excel, kode evaluasi, parameter bobot kinerja, dan laporan.
+2. **Supervisor (`supervisor`):** Memantau jadwal dan kehadiran instruktur, memverifikasi jurnal aktivitas mengajar beserta bukti dokumentasi, mengisi penilaian observasi pengajaran, meninjau hasil evaluasi peserta, serta mencetak/mengekspor laporan kinerja.
+3. **Instruktur (`instruktur`):** Melihat jadwal pribadi, melakukan check-in dan check-out kehadiran berbasis lokasi, melaporkan realisasi aktivitas mengajar, melihat umpan balik peserta, serta memantau rapor kinerja pribadi.
+4. **Peserta Pelatihan (Publik):** Mengisi kuesioner evaluasi pengajaran melalui halaman `/evaluasi` menggunakan kode akses kelas aktif tanpa perlu akun login.
 
-Here’s a tighter, more search-friendly version that highlights value and avoids fluff while keeping your structure intact.
+---
 
-## ✨ Key Features
+## Persyaratan Sistem
 
-* 🚀 **Laravel 12 Core** - Built on the latest Laravel release with improved routing, security, and Blade templating
-* 🎨 **Tailwind CSS v4** - Utility-first styling for rapid, consistent UI development
-* ⚡ **Alpine.js Interactivity** - Lightweight reactivity without a heavy JavaScript framework
-* 📦 **Vite Build System** - Fast dev server, instant HMR, and optimized production builds
-* 📱 **Fully Responsive Layouts** - Smooth, mobile-first design that adapts across all screen sizes
-* 🌙 **Built-in Dark Mode** - Ready-to-use modern dark theme for better usability and aesthetics
-* 📊 **Advanced UI Components** - Charts, data tables, forms, calendars, modals, and reusable blocks for complex dashboards
-* 🎯 **Production-Ready Dashboard UI** - Clean, modern interface crafted for real apps, not placeholder demos
+- **PHP:** `>= 8.2`
+- **Ekstensi PHP Wajib:** `bcmath`, `ctype`, `dom`, `fileinfo`, `gd`, `iconv`, `json`, `mbstring`, `openssl`, `pdo`, `pdo_mysql` (atau driver DB yang dipilih), `simplexml`, `tokenizer`, `xml`, `zip`
+- **Framework:** Laravel `^12.0`
+- **Composer:** `2.x`
+- **Node.js & npm:** Node.js `>= 18` dan npm `>= 9` (untuk kompilasi aset Vite + Tailwind CSS v4)
+- **Database:** MySQL `8.0+` / MariaDB `10.6+` (direkomendasikan untuk produksi) atau PostgreSQL / SQLite
+- **Konfigurasi Upload PHP (`php.ini`):** Disarankan `upload_max_filesize = 16M` dan `post_max_size = 20M` (batas unggah import spreadsheet `10 MB`, dokumen sertifikat & dokumentasi mengajar `5 MB`)
 
-### Other Versions
+---
 
-- [Next.js Version](https://github.com/TailAdmin/free-nextjs-admin-dashboard)
-- [React.js Version](https://github.com/TailAdmin/free-react-tailwind-admin-dashboard)
-- [Vue.js Version](https://github.com/TailAdmin/vue-tailwind-admin-dashboard)
-- [Angular Version](https://github.com/TailAdmin/free-angular-tailwind-dashboard)
-- [Laravel Version](https://github.com/TailAdmin/tailadmin-laravel)
+## Instalasi Lokal
 
-## 📋 Requirements
-To set up TailAdmin Laravel, make sure your environment includes:
+1. **Pasang dependensi PHP dan Node.js:**
+   ```bash
+   composer install
+   npm install
+   ```
 
-* **PHP 8.2+**
-* **Composer** (PHP dependency manager)
-* **Node.js 18+** and **npm** (for compiling frontend assets)
-* **Database** - Works with SQLite (default), MySQL, or PostgreSQL
+2. **Salin berkas konfigurasi lingkungan dan buat kunci enkripsi aplikasi:**
+   ```bash
+   cp .env.example .env
+   php artisan key:generate
+   ```
 
-### Tailwind CSS Laravel Dashboard
+3. **Sesuaikan konfigurasi database di `.env`:**
+   ```dotenv
+   APP_ENV=local
+   APP_DEBUG=true
+   APP_URL=http://localhost:8000
 
-TailAdmin delivers a refined Tailwind CSS Laravel Dashboard experience, combining Laravel’s robust backend with Tailwind’s flexible utility classes. The result is a clean, fast, and customizable dashboard that helps developers build modern admin interfaces without the usual front-end complexity. It’s ideal for teams looking for a Tailwind-powered Laravel starter that stays lightweight and easy to scale.
+   DB_CONNECTION=mysql
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_DATABASE=nama_database_anda
+   DB_USERNAME=pengguna_db
+   DB_PASSWORD=rahasia_db
+   ```
 
-### Laravel Admin Dashboard
+4. **Jalankan migrasi database:**
+   ```bash
+   php artisan migrate
+   ```
 
-If you’re searching for a dependable Laravel Admin Dashboard template that’s easy to set up and ready for production, TailAdmin fits the job. It offers a polished UI, reusable components, optimized performance, and all the essentials needed to launch dashboards, CRM systems, and internal tools quickly. It gives developers a solid foundation, so projects move faster with fewer decisions to worry about.
+5. **Siapkan tautan penyimpanan publik & kompilasi aset antarmuka:**
+   ```bash
+   php artisan storage:link
+   npm run build
+   ```
 
-### Check Your Environment
+---
 
-Verify your installations:
+## Inisialisasi Akun Awal & Seeder
 
+Sistem memisahkan seeder pengaturan produksi dari data contoh agar data sampel tidak masuk ke server produksi secara tidak sengaja.
+
+### 1. Seeder Produksi (`AdminSeeder`)
+Membuat parameter pengaturan awal LPK serta akun awal `admin@lpkcti.id` dan `supervisor@lpkcti.id` **hanya jika belum tersedia** di database.
+
+- Atur password awal terlebih dahulu pada `.env` sebelum menjalankan seeder (jangan gunakan password umum):
+  ```dotenv
+  ADMIN_INITIAL_PASSWORD="PasswordKuatUnikAdmin1!"
+  SUPERVISOR_INITIAL_PASSWORD="PasswordKuatUnikSpv1!"
+  ```
+- Apabila variabel tersebut dikosongkan, `AdminSeeder` **tidak** memakai password statis publik maupun password kosong, melainkan menghasilkan password acak satu kali dan menampilkannya di terminal saat eksekusi pertama.
+- Aman dijalankan ulang (*idempotent*): jika akun sudah ada, `AdminSeeder` tidak mengubah `password`, `name`, `role`, maupun status `is_active`. Pengaturan disimpan melalui `Setting::setIfMissing()` sehingga bobot KPI atau konfigurasi LPK yang sudah diubah Admin tidak tertimpa saat re-seed.
+- Jalankan perintah:
+  ```bash
+  php artisan db:seed
+  ```
+- Segera ganti password melalui menu **Pengaturan / Profil & Keamanan** setelah login pertama, lalu hapus nilai `*_INITIAL_PASSWORD` dari `.env`.
+
+### 2. Seeder Data Contoh (Opsional, Khusus Lingkungan Pengembangan)
+Untuk memuat data contoh instruktur, jadwal pola mingguan, dan kode evaluasi kelas di lingkungan lokal/pengujian:
 ```bash
-php -v
-composer -V
-node -v
-npm -v
+php artisan db:seed --class=LpkCtiJadwalMingguanSeeder
 ```
 
-## 🚀 Quick Start Installation
+---
 
-### Step 1: Clone the Repository
+## Penyimpanan Berkas (Storage)
 
-```bash
-git clone https://github.com/TailAdmin/tailadmin-laravel.git
-cd tailadmin-laravel
-```
+- **Disk `public` (`storage/app/public`):** Menyimpan foto profil pengguna dan instruktur. Dilayani melalui symbolic link `public/storage` serta dilengkapi rute fallback `/storage/{path}` apabila fungsi `symlink` dibatasi pada shared hosting.
+- **Disk `local` (`storage/app/private`):** Menyimpan dokumen internal sensitif (`instruktur/sertifikasi`, `aktivitas/dokumentasi`, dan berkas sementara `import_previews`). Berkas ini diblokir dari akses URL publik langsung (`403`) dan hanya dapat diakses melalui rute terautentikasi sesuai hak akses role.
 
-### Step 2: Install PHP Dependencies
-
-```bash
-composer install
-```
-
-This command will install all Laravel dependencies defined in `composer.json`.
-
-### Step 3: Install Node.js Dependencies
-
-```bash
-npm install
-```
-
-Or if you prefer yarn or pnpm:
-
-```bash
-# Using yarn
-yarn install
-
-# Using pnpm
-pnpm install
-```
-
-### Step 4: Environment Configuration
-
-Copy the example environment file:
-
-```bash
-cp .env.example .env
-```
-
-**For Windows users:**
-
-```bash
-copy .env.example .env
-```
-
-**Or create it programmatically:**
-
-```bash
-php -r "file_exists('.env') || copy('.env.example', '.env');"
-```
-
-### Step 5: Generate Application Key
-
-```bash
-php artisan key:generate
-```
-
-This creates a unique encryption key for your application.
-
-### Step 6: Configure Database
-
-#### Option A: Using MySQL/PostgreSQL
-
-Update your `.env` file with your database credentials:
-
-```env
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=tailadmin_db
-DB_USERNAME=your_username
-DB_PASSWORD=your_password
-```
-
-Create the database:
-
-```bash
-# MySQL
-mysql -u root -p -e "CREATE DATABASE tailadmin_db;"
-
-# PostgreSQL
-createdb tailadmin_db
-```
-
-Run migrations:
-
-```bash
-php artisan migrate
-```
-
-### Step 7: (Optional) Seed the Database
-
-If you want sample data:
-
-```bash
-php artisan db:seed
-```
-
-### Step 8: Storage Link
-
-Create a symbolic link for file storage:
-
-```bash
-php artisan storage:link
-```
-
-## 🏃 Running the Application
-
-### Development Mode (Recommended)
-
-The easiest way to start development is using the built-in script:
-
-```bash
-composer run dev
-```
-
-This single command starts:
-- ✅ Laravel development server (http://localhost:8000)
-- ✅ Vite dev server for hot module reloading
-- ✅ Queue worker for background jobs
-- ✅ Log monitoring
-
-**Access your application at:** [http://localhost:8000](http://localhost:8000)
-
-### Manual Development Setup
-
-If you prefer to run services individually in separate terminal windows:
-
-**Terminal 1 - Laravel Server:**
-```bash
-php artisan serve
-```
-
-**Terminal 2 - Frontend Assets:**
-```bash
-npm run dev
-```
-
-### Building for Production
-
-#### Build Frontend Assets
-
-```bash
-npm run build
-```
-
-#### Optimize Laravel
-
-```bash
-# Clear and cache configuration
-php artisan config:cache
-
-# Cache routes
-php artisan route:cache
-
-# Cache views
-php artisan view:cache
-
-# Optimize autoloader
-composer install --optimize-autoloader --no-dev
-```
-
-#### Production Environment
-
-Update your `.env` for production:
-
-```env
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://yourdomain.com
-```
-
-
-## 🧪 Testing
-
-Run the test suite using Pest:
-
-```bash
-composer run test
-```
-
-Or manually:
-
-```bash
-php artisan test
-```
-
-Run with coverage:
-
-```bash
-php artisan test --coverage
-```
-
-Run specific tests:
-
-```bash
-php artisan test --filter=ExampleTest
-```
-
-## 📜 Available Commands
-
-### Composer Scripts
-
-```bash
-# Start development environment
-composer run dev
-
-# Run tests
-composer run test
-
-# Code formatting (if configured)
-composer run format
-
-# Static analysis (if configured)
-composer run analyze
-```
-
-### NPM Scripts
-
-```bash
-# Start Vite dev server
-npm run dev
-
-# Build for production
-npm run build
-
-# Preview production build
-npm run preview
-
-# Lint JavaScript/TypeScript
-npm run lint
-
-# Format code
-npm run format
-```
-
-### Artisan Commands
-
-```bash
-# Start development server
-php artisan serve
-
-# Run migrations
-php artisan migrate
-
-# Rollback migrations
-php artisan migrate:rollback
-
-# Fresh migrations with seeding
-php artisan migrate:fresh --seed
-
-# Generate application key
-php artisan key:generate
-
-# Clear all caches
-php artisan optimize:clear
-
-# Cache everything for production
-php artisan optimize
-
-# Create symbolic link for storage
-php artisan storage:link
-
-# Start queue worker
-php artisan queue:work
-
-# List all routes
-php artisan route:list
-
-# Create a new controller
-php artisan make:controller YourController
-
-# Create a new model
-php artisan make:model YourModel -m
-
-# Create a new migration
-php artisan make:migration create_your_table
-```
-
-## 📁 Project Structure
-
-```
-tailadmin-laravel/
-├── app/                    # Application logic
-│   ├── Http/              # Controllers, Middleware, Requests
-│   ├── Models/            # Eloquent models
-│   └── Providers/         # Service providers
-├── bootstrap/             # Framework bootstrap files
-├── config/                # Configuration files
-├── database/              # Migrations, seeders, factories
-│   ├── migrations/
-│   ├── seeders/
-│   └── factories/
-├── public/                # Public assets (entry point)
-│   ├── build/            # Compiled assets (generated)
-│   └── index.php         # Application entry point
-├── resources/             # Views and raw assets
-│   ├── css/              # Stylesheets (Tailwind)
-│   ├── js/               # JavaScript files (Alpine.js)
-│   └── views/            # Blade templates
-├── routes/                # Route definitions
-│   ├── web.php           # Web routes
-│   ├── api.php           # API routes
-│   └── console.php       # Console routes
-├── storage/               # Logs, cache, uploads
-│   ├── app/
-│   ├── framework/
-│   └── logs/
-├── tests/                 # Pest test files
-│   ├── Feature/
-│   └── Unit/
-├── .env.example           # Example environment file
-├── artisan                # Artisan CLI
-├── composer.json          # PHP dependencies
-├── package.json           # Node dependencies
-├── vite.config.js         # Vite configuration
-└── tailwind.config.js     # Tailwind configuration
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### "Class not found" errors
-```bash
-composer dump-autoload
-```
-
-#### Permission errors on storage/bootstrap/cache
+Pastikan direktori `storage/` dan `bootstrap/cache/` memiliki izin tulis pada server Linux:
 ```bash
 chmod -R 775 storage bootstrap/cache
 ```
 
-#### NPM build errors
-```bash
-rm -rf node_modules package-lock.json
-npm install
+---
+
+## Penjadwalan Tugas (Cron / Scheduler)
+
+Aplikasi memiliki dua tugas terjadwal di `routes/console.php`:
+1. `absensi:auto-checkout` (setiap 15 menit): Menutup otomatis sesi presensi yang belum check-out melewati batas toleransi setelah jam selesai kelas.
+2. `import:cleanup-previews` (setiap jam): Menghapus berkas JSON pratinjau import yang telah kedaluwarsa (`> 60 menit`) selama tidak sedang dikunci oleh proses import aktif.
+
+Tambahkan entri Cron berikut pada server hosting:
+```cron
+* * * * * cd /path/ke/proyek && php artisan schedule:run >> /dev/null 2>&1
 ```
 
-#### Clear all caches
+---
+
+## Panduan Deployment Produksi
+
+1. Pastikan `.env` produksi menggunakan konfigurasi aman:
+   ```dotenv
+   APP_ENV=production
+   APP_DEBUG=false
+   APP_URL=https://domain-resmi-anda.id
+   SESSION_DRIVER=database
+   CACHE_STORE=database
+   QUEUE_CONNECTION=database
+   SESSION_SECURE_COOKIE=true
+   ```
+   Jika aplikasi berada di balik reverse proxy (seperti Nginx atau Cloudflare), isi `TRUSTED_PROXIES` dengan daftar IP/CIDR proxy tepercaya agar deteksi skema HTTPS dan batas percobaan login (`RateLimiter`) membaca IP klien yang sebenarnya.
+
+2. Kompilasi aset produksi dan pasang dependensi PHP tanpa paket dev:
+   ```bash
+   npm ci && npm run build
+   composer install --no-dev --optimize-autoloader
+   ```
+
+3. Jalankan migrasi secara aman (tanpa menghapus data) dan aktifkan cache optimasi Laravel:
+   ```bash
+   php artisan migrate --force
+   php artisan storage:link
+   php artisan optimize:clear
+   php artisan config:cache
+   php artisan route:cache
+   php artisan view:cache
+   ```
+
+> **Peringatan Keamanan Data:** Jangan pernah menjalankan `php artisan migrate:fresh` atau `php artisan db:wipe` pada lingkungan staging maupun produksi.
+
+---
+
+## Skenario Integrasi Database & Strategi Pemaketan Rilis
+
+### 1. Evaluasi Integrasi Database (Terpisah vs Bersama)
+Panduan lengkap instalasi database baru (Skenario A: Database Terpisah) maupun penggabungan ke database sistem eksisting beserta analisis benturan tabel, dampak migration historis, strategi prefix/isolasi, dan prosedur backup-restore (Skenario B: Database Bersama) didokumentasikan secara terpisah pada berkas `DOKUMENTASI_INTEGRASI_DATABASE.md`.
+
+### 2. Strategi Pemaketan Distribusi Final
+Karena direktori `/public/build` dikecualikan dari pelacakan Git (`.gitignore`), perintah `git archive` saja tidak menyertakan hasil kompilasi aset antarmuka. Saat membuat paket distribusi `.zip` final setelah seluruh perubahan di-commit:
+1. Jalankan `npm run build` dan pastikan `public/build/manifest.json` beserta `public/build/assets/*` mutakhir.
+2. Untuk paket dengan dependensi produksi lengkap (shared hosting tanpa Composer), jalankan `composer install --no-dev --optimize-autoloader` terlebih dahulu.
+3. Rakit paket dari working tree bersih (atau hasil `git archive` setelah commit terbaru **ditambah** penyalinan folder `public/build/`) dengan mengecualikan `.git/`, `.agents/`, `.claude/`, `node_modules/`, `tests/`, `.env*` (kecuali `.env.example`), `AGENTS.md`, `CLAUDE.md`, `AUDIT_PROGRESS.md`, `phpunit.xml`, `database/*.sqlite`, serta isi berkas lokal di `storage/logs/*`, `storage/framework/{cache,sessions,testing,views}/*`, `storage/app/private/*`, dan `storage/app/public/*`.
+
+---
+
+## Pengujian Otomatis
+
+Seluruh pengujian menggunakan database SQLite `:memory:` terisolasi (dikonfigurasi pada `phpunit.xml`) sehingga aman dijalankan kapan saja tanpa mengubah database lokal:
+
 ```bash
-php artisan optimize:clear
+php artisan test
 ```
-
-#### Database connection errors
-- Check `.env` database credentials
-- Ensure database server is running
-- Verify database exists
-
-## 🔄 Update Log
-
-### [2026-05-23]
-
-- Added **AI Settings** page to configure models, keys, and token limits.
-- Added **Maps** page with MapLibre GL, Leaflet, and iframe styles.
-- Added **Vector Maps** page powered by AmCharts 5 geodata (World & USA).
-- Added **Radar Charts** page with 3 unique formats.
-- Added **Radial Progress Charts** page featuring 4 custom layout templates.
-- Introduced new **Bar Charts Five & Six** and **Pie Charts Four & Five**.
-
-### [April 28, 2026]
-- Added **AI Dashboard** with token usage and revenue tracking.
-- Added **Sales Dashboard** with retention and multi-channel analytics.
-- Added **Finance Dashboard** with cashflow and balance management.
-- Introduced **6 New Layout variations** for improved UI flexibility.
-- Integrated **Advanced Data Visualization** with 7+ new chart types.
-
-### [2026-03-15]
-- Fixed PHP 8.5 deprecation warning
-
-### [2025-12-29]
-- Added Date Picker in Statistics Chart
-
-## License
-
-Refer to our [LICENSE](https://tailadmin.com/license) page for more information.

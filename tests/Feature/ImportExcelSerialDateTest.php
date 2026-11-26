@@ -8,8 +8,13 @@ use App\Models\Instruktur;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 
 uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    Storage::fake('local');
+});
 
 /**
  * Membangun file .xlsx valid di direktori temporary dengan ZipArchive untuk pengujian importer.

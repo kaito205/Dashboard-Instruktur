@@ -112,4 +112,10 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    'initial_passwords' => [
+        'admin'      => env('ADMIN_INITIAL_PASSWORD'),
+        'supervisor' => env('SUPERVISOR_INITIAL_PASSWORD'),
+        'instruktur' => env('INSTRUKTUR_INITIAL_PASSWORD'),
+    ],
+
 ];
